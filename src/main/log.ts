@@ -1,5 +1,5 @@
 import { app } from 'electron';
-import { appendFileSync, mkdirSync } from 'node:fs';
+import { appendFileSync, mkdirSync, existsSync, statSync, renameSync } from 'node:fs';
 import { join } from 'node:path';
 
 let file = '';
@@ -14,6 +14,8 @@ export function log(...parts: unknown[]) {
       const dir = app.getPath('logs');
       mkdirSync(dir, { recursive: true });
       file = join(dir, 'orange.log');
+      // Keep one previous log; cap each at ~5 MB.
+      if (existsSync(file) && statSync(file).size > 5 * 1024 * 1024) renameSync(file, join(dir, 'orange.old.log'));
     }
     appendFileSync(file, line);
   } catch {

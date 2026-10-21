@@ -119,7 +119,13 @@ async function viaOffice(input: string, output: string, fmt: string, ctx: Ctx, r
     prog(1);
     return output;
   }
-  if (officeErr) throw officeErr;
+  // Office was tried and failed (not activated, hung, crashed) and there's no LibreOffice.
+  // Report it as "unavailable" so callers with a built-in route (CSV/XLSX → PDF, DOCX via
+  // pandoc, …) fall back to it instead of failing; their own error surfaces if they can't.
+  if (officeErr) {
+    if (officeErr instanceof OfficeUnavailableError) throw officeErr;
+    throw new OfficeUnavailableError(officeErr instanceof Error ? officeErr.message : String(officeErr));
+  }
   throw needOfficeError(route.what);
 }
 

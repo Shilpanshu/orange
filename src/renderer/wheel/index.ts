@@ -142,6 +142,8 @@ orange.on('wheel:open', (o: { wheel: WheelKind; mode: 'drag' | 'click'; paths?: 
 orange.on('wheel:close', () => {
   show(false);
   hover = picked = -1;
+  selPaths = null;
+  dragCount = -1;
 });
 
 orange.on('wheel:nav', (key: string) => {
@@ -160,8 +162,33 @@ orange.on('wheel:nav', (key: string) => {
 
 // ------------------------------------------------------------- drag & drop
 
+// Exact paths from the Explorer selection (drag mode). Trusted only while the number of
+// dragged items matches, so a stale selection never overrides a drag from another app.
+let selPaths: string[] | null = null;
+let dragCount = -1;
+
+function applySelection() {
+  if (!selPaths || knownPaths) return false;
+  if (dragCount >= 0 && dragCount !== selPaths.length) return false;
+  const next = selPaths.map(extOf).filter(Boolean);
+  const folder = selPaths.some((p) => !extOf(p));
+  if (next.join() !== exts.join() || folder !== hasFolder) {
+    exts = next;
+    hasFolder = folder;
+    render();
+  }
+  return true;
+}
+
+orange.on('wheel:paths', (paths: string[]) => {
+  selPaths = paths;
+  applySelection();
+});
+
 function sniff(dt: DataTransfer | null) {
   if (!dt || knownPaths) return;
+  dragCount = Array.from(dt.items).filter((i) => i.kind === 'file').length;
+  if (applySelection()) return;
   const next: string[] = [];
   let folder = false;
   for (const item of Array.from(dt.items)) {

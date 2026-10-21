@@ -354,6 +354,13 @@ async function about() {
       h('h3', {}, 'Open-source components'),
       h('p', {}, 'FFmpeg, ImageMagick, libvips (sharp), 7-Zip, Pandoc, Ghostscript, pdf-lib, PDF.js, Tesseract and MediaPipe, each under its own licence.'),
     ),
+    h(
+      'div',
+      { class: 'row', style: { gap: '8px', margin: '18px 0 10px', justifyContent: 'flex-start' } },
+      h('button', { class: 'btn fixed', onclick: () => orange.invoke('app:checkUpdates') }, 'Check for updates'),
+      h('button', { class: 'btn fixed', onclick: () => orange.invoke('app:report') }, 'Report a problem…'),
+    ),
+    h('p', { class: 'muted' }, 'Updates download in the background and install when you quit Orange.'),
     h('p', { class: 'links' }, h('a', { onclick: () => orange.invoke('app:openLogs') }, 'Open log folder')),
   );
 }

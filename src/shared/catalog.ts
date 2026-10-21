@@ -26,7 +26,7 @@ reg('pdf', ['pdf']);
 reg('document', ['docx', 'doc', 'odt', 'pages', 'md', 'markdown', 'txt', 'rtf', 'html', 'htm']);
 reg('ebook', ['epub']);
 reg('slides', ['pptx', 'ppt', 'odp', 'key']);
-reg('spreadsheet', ['xlsx', 'xls', 'ods', 'csv', 'tsv', 'numbers']);
+reg('spreadsheet', ['xlsx', 'xlsm', 'xlsb', 'xls', 'ods', 'csv', 'tsv', 'numbers']);
 reg('subtitle', ['srt', 'vtt']);
 reg('archive', ['zip', 'tar', 'gz', 'tgz', 'rar', '7z']);
 
@@ -58,6 +58,7 @@ const MIME_EXT: Record<string, string> = {
   'application/vnd.ms-powerpoint': 'ppt', 'application/vnd.oasis.opendocument.presentation': 'odp',
   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
   'application/vnd.ms-excel': 'xls', 'application/vnd.oasis.opendocument.spreadsheet': 'ods',
+  'application/vnd.ms-excel.sheet.macroenabled.12': 'xlsm', 'application/vnd.ms-excel.sheet.binary.macroenabled.12': 'xlsb',
   'text/csv': 'csv', 'text/tab-separated-values': 'tsv',
   'application/x-subrip': 'srt', 'text/vtt': 'vtt',
   'application/zip': 'zip', 'application/x-zip-compressed': 'zip', 'application/x-tar': 'tar',

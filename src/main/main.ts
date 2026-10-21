@@ -15,9 +15,12 @@ import { officeStatus, installLibreOffice } from './engines/office';
 import { binDir } from './paths';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { startCrashCapture, reportProblem } from './diagnostics';
+import { startUpdater, updateState, check as checkForUpdates, installNow } from './updater';
 
 if (!app.requestSingleInstanceLock()) app.exit(0);
 app.setAppUserModelId('app.orange.converter');
+startCrashCapture();
 
 let tray: Tray | null = null;
 const watcher = new DragWatcher();
@@ -33,19 +36,32 @@ function wheelForMod(mod: ModKey): WheelKind | null {
   return null;
 }
 
-function buildTray() {
-  tray = new Tray(nativeImage.createFromPath(asset('tray.png')));
-  tray.setToolTip('Orange: drag a file, then tap Shift');
-  const menu = Menu.buildFromTemplate([
-    { label: 'Orange is running', enabled: false },
+function trayMenu(): Menu {
+  const up = updateState();
+  const updateItem: Electron.MenuItemConstructorOptions =
+    up.status === 'ready'
+      ? { label: `Restart to update to ${up.version}`, click: () => installNow() }
+      : up.status === 'downloading'
+        ? { label: `Downloading update… ${Math.round(up.percent ?? 0)}%`, enabled: false }
+        : { label: 'Check for updates', click: () => checkForUpdates(true) };
+  return Menu.buildFromTemplate([
+    { label: `Orange ${app.getVersion()}`, enabled: false },
     { type: 'separator' },
     { label: 'Show shelf', click: () => shelf.add([]) },
     { label: 'Settings…', click: () => openSettings() },
     { label: 'How to use', click: () => openSettings('welcome') },
     { type: 'separator' },
+    updateItem,
+    { label: 'Report a problem…', click: () => reportProblem().catch((e) => log('report failed', e)) },
+    { type: 'separator' },
     { label: 'Quit Orange', role: 'quit' },
   ]);
-  tray.setContextMenu(menu);
+}
+
+function buildTray() {
+  tray = new Tray(nativeImage.createFromPath(asset('tray.png')));
+  tray.setToolTip('Orange: drag a file, then tap Shift');
+  tray.setContextMenu(trayMenu());
   tray.on('click', () => openSettings());
 }
 
@@ -77,12 +93,21 @@ app.whenReady().then(() => {
   startHelper();
   applyHotkey();
 
+  // Read the Explorer selection as soon as a drag starts (the source window is still in front),
+  // so the wheel can show options for the exact files instead of guessing from MIME types.
+  let dragSelection: Promise<string[]> = Promise.resolve([]);
+  watcher.on('dragstart', () => {
+    dragSelection = explorerSelection();
+  });
   watcher.on('modifier', (mod: ModKey) => {
     const w = wheelForMod(mod);
     log('modifier during drag', mod, w);
     if (!w) return;
     watcher.listeningNav = true;
     wheel.open({ wheel: w, mode: 'drag' });
+    dragSelection.then((paths) => {
+      if (paths.length && wheel.isOpen) wheel.setPaths(paths);
+    });
   });
   watcher.on('release', () => {
     watcher.listeningNav = false;
@@ -109,6 +134,10 @@ app.whenReady().then(() => {
     return { convert: KEY_LABEL[k.convert], tools: KEY_LABEL[k.tools], actions: KEY_LABEL[k.actions] };
   });
   ipcMain.handle('app:version', () => app.getVersion());
+  ipcMain.handle('app:report', () => reportProblem());
+  ipcMain.handle('app:checkUpdates', () => checkForUpdates(true));
+  ipcMain.handle('app:updateState', () => updateState());
+  startUpdater(() => tray?.setContextMenu(trayMenu()));
   ipcMain.handle('engines:status', async () => {
     const st = await officeStatus();
     const has = (p: string) => existsSync(join(binDir, p));

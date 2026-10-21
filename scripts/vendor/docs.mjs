@@ -154,6 +154,43 @@ async function ghostscript() {
   console.log(`  ${n} files; ` + execFileSync(exe, ['--version']).toString().trim());
 }
 
+/** Ship licence notices next to the binaries (GPL/AGPL require it). */
+async function licences() {
+  // Ghostscript: the conda package carries its licence under info/licenses in info-*.tar.zst.
+  const gsLicence = join(binDir, 'gs', 'LICENSE.txt');
+  if (!existsSync(gsLicence) || force) {
+    const zip = await JSZip.loadAsync(await download(GHOSTSCRIPT, 'ghostscript (conda-forge)'));
+    const info = Object.keys(zip.files).find((n) => /^info-.*\.tar\.zst$/.test(n));
+    const files = info ? untar(zstdDecompressSync(await zip.file(info).async('nodebuffer'))) : [];
+    const lic = files.filter((f) => /^info\/licenses\//.test(f.name) && f.data.length);
+    if (lic.length) {
+      writeFileSync(gsLicence, Buffer.concat(lic.flatMap((f) => [Buffer.from(`==== ${f.name.replace(/^info\/licenses\//, '')} ====\n`), f.data, Buffer.from('\n\n')])));
+      console.log(`ghostscript licence: ${lic.length} file(s)`);
+    } else console.warn('ghostscript licence: not found in package');
+  }
+  // Pandoc: the PyPI wheel has no licence file, so point to the canonical text and source.
+  const pandocNotice = join(binDir, 'pandoc-LICENSE.txt');
+  if (!existsSync(pandocNotice) || force) {
+    writeFileSync(
+      pandocNotice,
+      [
+        'Pandoc (pandoc.exe) is distributed unmodified with Orange.',
+        'Copyright (C) John MacFarlane and contributors.',
+        '',
+        'Licence: GNU General Public License, version 2 or (at your option) any later version.',
+        'Full licence text: https://www.gnu.org/licenses/old-licenses/gpl-2.0.txt',
+        'Pandoc licence and copyright notes: https://github.com/jgm/pandoc/blob/main/COPYRIGHT',
+        'Source code for this exact version: https://github.com/jgm/pandoc/releases',
+        '',
+        'Obtained from the pypandoc_binary wheel on PyPI: https://pypi.org/project/pypandoc-binary/',
+        '',
+      ].join('\n'),
+    );
+    console.log('pandoc licence notice: written');
+  }
+}
+
 await pandoc();
 await ghostscript();
+await licences();
 console.log('docs vendor: done');

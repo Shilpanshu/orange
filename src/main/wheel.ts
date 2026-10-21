@@ -81,6 +81,11 @@ export class Wheel {
     this.isOpen = true;
   }
 
+  /** Exact paths of the dragged files (from the Explorer selection) once known. */
+  setPaths(paths: string[]) {
+    if (this.isOpen) this.win.webContents.send('wheel:paths', paths);
+  }
+
   nav(key: string) {
     if (this.isOpen) this.win.webContents.send('wheel:nav', key);
   }

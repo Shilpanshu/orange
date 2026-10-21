@@ -55,10 +55,7 @@ export class DragWatcher extends EventEmitter {
     });
     uIOhook.on('mousemove', (e) => {
       if (!this.down || this.dragging) return;
-      if (Math.abs(e.x - this.origin.x) + Math.abs(e.y - this.origin.y) > DRAG_THRESHOLD) {
-        this.dragging = true;
-        if (process.env.ORANGE_DEBUG) console.log('drag started');
-      }
+      if (Math.abs(e.x - this.origin.x) + Math.abs(e.y - this.origin.y) > DRAG_THRESHOLD) this.beginDrag();
     });
     // Movement with a button held arrives as EVENT_MOUSE_DRAGGED, which uiohook-napi only
     // forwards through the generic 'input' event.
@@ -68,7 +65,7 @@ export class DragWatcher extends EventEmitter {
         this.down = true;
         this.origin = { x: e.x, y: e.y };
       }
-      if (!this.dragging && Math.abs(e.x - this.origin.x) + Math.abs(e.y - this.origin.y) > DRAG_THRESHOLD) this.dragging = true;
+      if (!this.dragging && Math.abs(e.x - this.origin.x) + Math.abs(e.y - this.origin.y) > DRAG_THRESHOLD) this.beginDrag();
     });
     uIOhook.on('mouseup', (e) => {
       if (e.button !== 1) return;
@@ -97,6 +94,14 @@ export class DragWatcher extends EventEmitter {
       this.heldMods.delete(e.keycode);
     });
     uIOhook.start();
+  }
+
+  // The source window (usually Explorer) is still in front at this point, so main can read
+  // its selection to learn exactly which files are being dragged.
+  private beginDrag() {
+    this.dragging = true;
+    if (process.env.ORANGE_DEBUG) console.log('drag started');
+    this.emit('dragstart');
   }
 
   get isDragging() {
