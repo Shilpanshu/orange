@@ -1,0 +1,52 @@
+{
+    "name": "orange",
+    "version": "1.0.0",
+    "description": "Drag a file, tap a key, convert it. A radial file converter for Windows.",
+    "main": "dist/main.js",
+    "scripts": {
+        "build": "node scripts/build-helper.mjs && node scripts/build.mjs",
+        "start": "node scripts/build.mjs && electron .",
+        "dev": "electron .",
+        "dist": "npm run build && electron-builder --win",
+        "typecheck": "tsc --noEmit"
+    },
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/Shilpanshu/orange.git"
+    },
+    "keywords": [],
+    "author": "",
+    "license": "ISC",
+    "type": "commonjs",
+    "bugs": {
+        "url": "https://github.com/Shilpanshu/orange/issues"
+    },
+    "homepage": "https://github.com/Shilpanshu/orange#readme",
+    "devDependencies": {
+        "@types/node": "^26.6.5",
+        "electron": "^45.0.0",
+        "electron-builder": "^26.15.3",
+        "esbuild": "^0.28.2",
+        "typescript": "^7.0.2"
+    },
+    "dependencies": {
+        "@mediapipe/tasks-vision": "^1.1.1",
+        "@tesseract.js-data/eng": "^1.0.0",
+        "exceljs": "^4.4.0",
+        "heic-convert": "^2.1.0",
+        "heic-decode": "^2.1.0",
+        "jszip": "^3.10.2",
+        "pdf-lib": "^1.17.1",
+        "pdfjs-dist": "^6.4.299",
+        "sharp": "^0.35.5",
+        "tesseract.js": "^7.0.0",
+        "uiohook-napi": "^1.5.5"
+    },
+    "allowScripts": {
+        "electron@45.0.0": true,
+        "electron-winstaller@5.4.0": true,
+        "esbuild@0.28.2": true,
+        "sharp@0.35.5": true,
+        "uiohook-napi@1.5.5": true
+    }
+}
