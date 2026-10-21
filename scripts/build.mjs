@@ -3,6 +3,7 @@
 import * as esbuild from 'esbuild';
 import { cpSync, mkdirSync, readdirSync, existsSync, statSync } from 'node:fs';
 import { join } from 'node:path';
+import { copyImageAssets } from './build-assets-image.mjs';
 
 const watch = process.argv.includes('--watch');
 const root = new URL('..', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1');
@@ -51,6 +52,8 @@ function copyStatic() {
     }
   }
   cpSync(join(root, 'assets'), join(out, 'assets'), { recursive: true });
+  // MediaPipe wasm + tesseract worker/core/language data for offline redaction.
+  copyImageAssets(root, out);
   // pdf.js worker for the PDF renderer page.
   const pdfjs = join(root, 'node_modules/pdfjs-dist/build');
   if (existsSync(pdfjs)) {

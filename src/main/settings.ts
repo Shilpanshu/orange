@@ -19,6 +19,8 @@ export interface Settings {
   theme: 'system' | 'light' | 'dark';
   terminal: 'auto' | 'wt' | 'pwsh' | 'powershell' | 'cmd';
   shelfEdge: 'right' | 'left';
+  // Last folder chosen for the Move action (empty = ask from the file's own folder).
+  moveFolder?: string;
   onboarded: boolean;
 }
 
@@ -34,6 +36,7 @@ const DEFAULTS: Settings = {
   theme: 'system',
   terminal: 'auto',
   shelfEdge: 'right',
+  moveFolder: '',
   onboarded: false,
 };
 

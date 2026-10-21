@@ -1,4 +1,4 @@
-import { app, Tray, Menu, ipcMain, nativeImage, globalShortcut, BrowserWindow, nativeTheme } from 'electron';
+import { app, Tray, Menu, ipcMain, nativeImage, globalShortcut, BrowserWindow, nativeTheme, shell } from 'electron';
 import { DragWatcher } from './drag-watcher';
 import { Wheel, registerWheelIpc } from './wheel';
 import { settings, type ModKey } from './settings';
@@ -10,6 +10,11 @@ import { explorerSelection, startHelper } from './helper';
 import { log } from './log';
 import { hud } from './hud';
 import { registerFileIpc } from './ipc-files';
+import { shelf } from './shelf';
+import { officeStatus, installLibreOffice } from './engines/office';
+import { binDir } from './paths';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 
 if (!app.requestSingleInstanceLock()) app.exit(0);
 app.setAppUserModelId('app.orange.converter');
@@ -34,6 +39,7 @@ function buildTray() {
   const menu = Menu.buildFromTemplate([
     { label: 'Orange is running', enabled: false },
     { type: 'separator' },
+    { label: 'Show shelf', click: () => shelf.add([]) },
     { label: 'Settings…', click: () => openSettings() },
     { label: 'How to use', click: () => openSettings('welcome') },
     { type: 'separator' },
@@ -102,6 +108,23 @@ app.whenReady().then(() => {
     const k = settings.get().keys;
     return { convert: KEY_LABEL[k.convert], tools: KEY_LABEL[k.tools], actions: KEY_LABEL[k.actions] };
   });
+  ipcMain.handle('app:version', () => app.getVersion());
+  ipcMain.handle('engines:status', async () => {
+    const st = await officeStatus();
+    const has = (p: string) => existsSync(join(binDir, p));
+    return {
+      ...st,
+      bundled: {
+        'FFmpeg (video and audio)': has('ffmpeg.exe'),
+        'ImageMagick (images)': has('imagemagick/magick.exe'),
+        'Pandoc (documents)': has('pandoc.exe'),
+        'Ghostscript (PDF)': has('gs/bin/gswin64c.exe'),
+        '7-Zip (archives)': has('7z.exe'),
+      },
+    };
+  });
+  ipcMain.handle('engines:installLibreOffice', () => installLibreOffice());
+  ipcMain.handle('app:openLogs', () => shell.openPath(app.getPath('logs')));
   ipcMain.handle('settings:get', () => settings.get());
   ipcMain.handle('settings:set', (_e, patch) => {
     settings.set(patch);

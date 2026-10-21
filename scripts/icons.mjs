@@ -8,6 +8,7 @@ for (const s of sizes) {
   pngs[s] = await sharp('assets/logo.svg', { density: 600 }).resize(s, s).png().toBuffer();
 }
 writeFileSync('assets/tray.png', pngs[32]);
+writeFileSync('assets/icon-32.png', pngs[32]);
 writeFileSync('assets/icon.png', await sharp('assets/logo.svg', { density: 600 }).resize(512, 512).png().toBuffer());
 
 // Minimal ICO writer: PNG-compressed entries are valid for Vista+.
