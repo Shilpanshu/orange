@@ -48,6 +48,19 @@ jobs:
       - name: Download bundled tools (FFmpeg, 7-Zip, ImageMagick, Pandoc, Ghostscript)
         run: npm run vendor
 
+      # Create the release up front. electron-builder uploads files in parallel and, if no
+      # release exists yet, each upload can create its own copy of the release.
+      - name: Create the GitHub release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $tag = '${{ github.ref_name }}'
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -ne 0) { gh release create $tag --title $tag.TrimStart('v') --generate-notes }
+          exit 0
+
       - name: Build and publish installer
         run: node scripts/dist.mjs --publish
         env:
