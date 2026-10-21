@@ -79,7 +79,8 @@ const DEFAULTS: Settings = {
   presets: [],
   watchFolders: [],
   contextMenu: true,
-  clipboardHotkey: 'Control+Shift+V',
+  // Not Ctrl+Shift+V: that is "paste as plain text" in many apps.
+  clipboardHotkey: 'Control+Alt+V',
   gpuEncode: 'auto',
 };
 

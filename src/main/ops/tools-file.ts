@@ -11,6 +11,7 @@ import { extOf, kindOfExt, type Kind } from '../../shared/catalog';
 import type { Ctx, ToolFn } from './types';
 import { UserError } from './types';
 import { run } from '../engines/run';
+import { gpuArgsFor } from '../engines/ffmpeg';
 import { bin, hasBin } from '../paths';
 import { settings } from '../settings';
 import { converter as archiveConverter } from './convert-archive';
@@ -61,6 +62,20 @@ async function ffprobe(input: string, signal?: AbortSignal): Promise<Probe> {
 }
 
 async function ffmpeg(args: string[], out: string, ctx: Ctx, duration: number, onFrac: (f: number) => void) {
+  // Constant-quality H.264 runs on the graphics card when there is one; any GPU failure retries on the CPU.
+  const gpu = await gpuArgsFor(args).catch(() => null);
+  if (gpu) {
+    try {
+      return await ffmpegRun(gpu, out, ctx, duration, onFrac);
+    } catch (e) {
+      if (ctx.signal.aborted) throw e;
+      log('GPU encode failed; encoding on the CPU instead', e);
+    }
+  }
+  await ffmpegRun(args, out, ctx, duration, onFrac);
+}
+
+async function ffmpegRun(args: string[], out: string, ctx: Ctx, duration: number, onFrac: (f: number) => void) {
   await run('ffmpeg', ['-hide_banner', '-nostdin', '-y', ...args, '-progress', 'pipe:1', '-nostats', out], {
     signal: ctx.signal,
     onLine(line, stream) {

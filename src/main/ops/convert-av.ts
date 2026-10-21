@@ -2,7 +2,7 @@
 // Speed first: streams whose codec already fits the target container are copied (a remux takes seconds);
 // only the streams that don't fit are re-encoded, with quality-first defaults.
 import { rmSync, existsSync, statSync } from 'node:fs';
-import { ffmpeg, probe, type ProbeInfo, type StreamInfo } from '../engines/ffmpeg';
+import { ffmpeg, gpuEncoder, gpuPixFmt, gpuQualityArgs, probe, type ProbeInfo, type StreamInfo } from '../engines/ffmpeg';
 import type { ConverterModule, Ctx } from './types';
 import { UserError } from './types';
 import { log } from '../log';
@@ -33,13 +33,17 @@ const AUDIO_COPY: Record<Container, string[]> = {
   wmv: ['wmav1', 'wmav2', 'wmapro'],
 };
 
-/** Video encoder settings when the source can't be copied. */
-function videoEncoder(c: Container, src: StreamInfo): string[] {
+/** H.264 quality for re-encodes (x264 CRF scale; the GPU encoders get the matching level). */
+const H264_CRF = 20;
+
+/** Video encoder settings when the source can't be copied. `gpu` is a hardware H.264 encoder to use instead of x264. */
+function videoEncoder(c: Container, src: StreamInfo, gpu: string | null): string[] {
   switch (c) {
     case 'mp4':
     case 'mov':
     case 'mkv':
-      return ['libx264', '-preset', 'faster', '-crf', '20', '-pix_fmt', 'yuv420p', '-profile:v', 'high'];
+      if (gpu) return [gpu, ...gpuQualityArgs(gpu, H264_CRF), '-pix_fmt', gpuPixFmt(gpu), '-profile:v', 'high'];
+      return ['libx264', '-preset', 'faster', '-crf', String(H264_CRF), '-pix_fmt', 'yuv420p', '-profile:v', 'high'];
     case 'webm':
       // VP9 constant quality; row-mt + cpu-used 4 keeps it reasonably quick.
       return ['libvpx-vp9', '-crf', '32', '-b:v', '0', '-deadline', 'good', '-cpu-used', '4', '-row-mt', '1', '-pix_fmt', 'yuv420p'];
@@ -97,12 +101,25 @@ export const converter: ConverterModule = {
 async function toVideo(input: string, info: ProbeInfo, c: Container, ctx: Ctx): Promise<string> {
   if (!info.video && !info.audio) throw new UserError('This file has no video or audio in it.');
   const out = ctx.out(input, c);
-  return produce(out, input, ctx, (allowCopy) =>
-    ffmpeg([...videoArgs(input, info, c, allowCopy), out], { ctx, duration: info.duration, range: [0.02, 1] }),
-  );
+  // H.264 re-encodes go to the graphics card when it has an encoder (Settings → GPU encoding).
+  const gpu = info.video && (c === 'mp4' || c === 'mov' || c === 'mkv') ? await gpuEncoder('h264') : null;
+  return produce(out, input, ctx, async (allowCopy) => {
+    const args = videoArgs(input, info, c, allowCopy, gpu);
+    const run = (a: string[]) => ffmpeg([...a, out], { ctx, duration: info.duration, range: [0.02, 1] });
+    if (!gpu || !args.includes(gpu)) return run(args);
+    try {
+      return await run(args);
+    } catch (e) {
+      // Driver hiccup, unsupported size, too many sessions…: the same job on the CPU.
+      if (ctx.signal.aborted) throw e;
+      log('GPU encode failed; encoding on the CPU instead', input, e);
+      rmSync(out, { force: true });
+      return run(videoArgs(input, info, c, allowCopy, null));
+    }
+  });
 }
 
-function videoArgs(input: string, info: ProbeInfo, c: Container, allowCopy: boolean): string[] {
+function videoArgs(input: string, info: ProbeInfo, c: Container, allowCopy: boolean, gpu: string | null): string[] {
   const args = ['-i', input, '-map_metadata', '0'];
   const v = info.video;
   const singleAudio = c === 'avi' || c === 'wmv';
@@ -117,7 +134,7 @@ function videoArgs(input: string, info: ProbeInfo, c: Container, allowCopy: bool
       args.push('-c:v', 'copy');
       if (v.codec === 'hevc' && (c === 'mp4' || c === 'mov')) args.push('-tag:v', 'hvc1'); // plays on Windows/Apple
     } else {
-      args.push('-c:v', ...videoEncoder(c, v));
+      args.push('-c:v', ...videoEncoder(c, v, gpu));
       const odd = ((v.width ?? 0) | (v.height ?? 0)) & 1;
       if (odd) args.push('-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2');
       const fps = v.fps ?? 30;

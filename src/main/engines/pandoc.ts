@@ -1,13 +1,64 @@
 // Pandoc: the universal converter for text-structured documents
-// (Markdown, HTML, DOCX, ODT, RTF, EPUB, plain text). Bundled as vendor/bin/pandoc.exe.
-import { existsSync, writeFileSync } from 'node:fs';
+// (Markdown, HTML, DOCX, ODT, RTF, EPUB, plain text).
+//
+// From source it runs vendor/bin/pandoc.exe. The installer ships it zstd-compressed instead
+// (bin/pandoc.exe.zst, 22 MB rather than 169 MB, see scripts/vendor/docs.mjs); the first document
+// conversion unpacks it once, offline, in about a second, next to the archive (or under userData when
+// the install folder is read-only), and every later run uses the unpacked copy directly.
+import { app } from 'electron';
+import { createReadStream, createWriteStream, existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { bin, hasBin } from '../paths';
+import { pipeline } from 'node:stream/promises';
+import { constants as zc, createZstdDecompress } from 'node:zlib';
+import { bin, binDir, hasBin } from '../paths';
 import { run } from './run';
+import { log } from '../log';
 import { UserError } from '../ops/types';
 
+const packedPandoc = () => `${bin('pandoc')}.zst`;
+
 export function hasPandoc(): boolean {
-  return hasBin('pandoc');
+  return hasBin('pandoc') || existsSync(packedPandoc());
+}
+
+let unpacking: Promise<string> | null = null;
+
+/** Path of a runnable pandoc.exe, unpacking the shipped archive the first time it's needed. */
+export function pandocExe(): Promise<string> {
+  if (hasBin('pandoc')) return Promise.resolve(bin('pandoc'));
+  const packed = packedPandoc();
+  if (!existsSync(packed)) return Promise.reject(new UserError('The document converter is missing. Reinstall Orange.'));
+  // The archive's size names the unpacked copy, so an update that ships another pandoc never reuses a stale one.
+  const name = `pandoc-${statSync(packed).size.toString(36)}.exe`;
+  const dirs = [binDir, join(app.getPath('userData'), 'engines')];
+  for (const d of dirs) if (existsSync(join(d, name))) return Promise.resolve(join(d, name));
+  unpacking ??= unpackTo(packed, name, dirs).finally(() => (unpacking = null));
+  return unpacking;
+}
+
+async function unpackTo(packed: string, name: string, dirs: string[]): Promise<string> {
+  let lastErr: unknown;
+  for (const dir of dirs) {
+    const exe = join(dir, name);
+    const part = `${exe}.${process.pid}.part`;
+    try {
+      const started = Date.now();
+      mkdirSync(dir, { recursive: true });
+      // The archive carries a content checksum, which the decoder verifies before finishing.
+      await pipeline(createReadStream(packed), createZstdDecompress({ params: { [zc.ZSTD_d_windowLogMax]: 27 } }), createWriteStream(part));
+      renameSync(part, exe);
+      for (const f of readdirSync(dir)) {
+        if (/^pandoc-[0-9a-z]+\.exe$/.test(f) && f !== name) rmSync(join(dir, f), { force: true });
+      }
+      log(`pandoc unpacked to ${exe} in ${Date.now() - started} ms`);
+      return exe;
+    } catch (e) {
+      lastErr = e;
+      rmSync(part, { force: true });
+      log(`could not unpack pandoc into ${dir}`, e);
+    }
+  }
+  throw new UserError(`The document converter could not be prepared (${(lastErr as Error)?.message ?? lastErr}).`);
 }
 
 /** Pandoc reader name for a file extension. */
@@ -93,6 +144,7 @@ export interface PandocOptions {
  */
 export async function pandocConvert(input: string, from: string, output: string, to: string, opts: PandocOptions): Promise<void> {
   if (!hasPandoc()) throw new UserError('The document converter is missing. Reinstall Orange.');
+  const exe = await pandocExe();
   const args = ['--from', from, '--to', to, '--output', output];
   const res = [dirname(input), ...(opts.resourcePath ?? [])];
   args.push(`--resource-path=${res.join(';')}`);
@@ -132,6 +184,6 @@ export async function pandocConvert(input: string, from: string, output: string,
   }
   if (opts.extra) args.push(...opts.extra);
   args.push(input);
-  await run(bin('pandoc'), args, { signal: opts.signal, cwd: opts.cwd ?? dirname(output) });
+  await run(exe, args, { signal: opts.signal, cwd: opts.cwd ?? dirname(output) });
   if (!existsSync(output)) throw new Error('pandoc produced no output');
 }

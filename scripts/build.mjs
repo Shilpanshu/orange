@@ -10,8 +10,14 @@ const root = new URL('..', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '
 const out = join(root, 'dist');
 mkdirSync(out, { recursive: true });
 
-// Native / heavy modules stay external and are shipped in node_modules.
-const external = ['electron', 'uiohook-napi', 'sharp', 'exceljs', 'pdfjs-dist', 'heic-convert', 'heic-decode', 'libheif-js'];
+// Native / heavy modules stay external and are shipped in node_modules. Everything else is bundled, so
+// only these (plus what the AI tools load with createRequire: transformers.js, onnxruntime-node,
+// tesseract.js) need to be production "dependencies" in package.json; bundled-only packages are
+// devDependencies, which keeps them out of the installer.
+const external = [
+  'electron', 'uiohook-napi', 'sharp', 'exceljs', 'pdfjs-dist', 'heic-convert', 'heic-decode', 'libheif-js',
+  '@huggingface/transformers', 'onnxruntime-node', 'onnxruntime-common', 'tesseract.js',
+];
 
 const common = {
   bundle: true,

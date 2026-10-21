@@ -17,6 +17,10 @@ const SIZES: Record<string, [number, number]> = {
   splitPdf: [720, 600],
   audioChannels: [720, 520],
   normalizeAudio: [720, 560],
+  rename: [960, 680],
+  ocr: [900, 640],
+  protect: [520, 700],
+  unlock: [480, 420],
 };
 const DEFAULT_SIZE: [number, number] = [1080, 760];
 

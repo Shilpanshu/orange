@@ -4,6 +4,7 @@
 import { spawn } from 'node:child_process';
 import { bin } from '../paths';
 import { log } from '../log';
+import { gpuArgsFor } from '../engines/ffmpeg';
 import type { Ctx } from './types';
 import { UserError } from './types';
 
@@ -84,8 +85,25 @@ export interface FfOptions {
   binary?: boolean;
 }
 
-/** Runs ffmpeg with progress reporting. `args` are everything after the global flags. */
+/**
+ * Runs ffmpeg with progress reporting. `args` are everything after the global flags.
+ * A constant-quality libx264/libx265 encode runs on the graphics card when one is available
+ * (Settings → GPU encoding); if that fails for any reason the same job runs again on the CPU.
+ */
 export async function ffmpeg(args: string[], o: FfOptions = {}): Promise<Buffer> {
+  const gpu = await gpuArgsFor(args).catch(() => null);
+  if (gpu) {
+    try {
+      return await runFfmpeg(gpu, o);
+    } catch (e) {
+      if ((o.signal ?? o.ctx?.signal)?.aborted) throw e;
+      log('GPU encode failed; encoding on the CPU instead', e);
+    }
+  }
+  return runFfmpeg(args, o);
+}
+
+async function runFfmpeg(args: string[], o: FfOptions): Promise<Buffer> {
   const [from, to] = o.range ?? [0, 1];
   const dur = o.duration && o.duration > 0 ? o.duration : 0;
   let last = -1;

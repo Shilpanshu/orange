@@ -118,6 +118,7 @@ async function move(paths: string[]) {
 
   const job = hud.start(`Moving ${what(paths)}`, paths.length, () => {});
   const moved: string[] = [];
+  const from = new Map<string, string>(); // new location → original location, for Undo
   const errors: string[] = [];
   for (let i = 0; i < paths.length; i++) {
     const src = paths[i];
@@ -128,6 +129,7 @@ async function move(paths: string[]) {
       job.progress(i / paths.length, basename(src));
       await moveOne(src, target);
       moved.push(target);
+      from.set(target, src);
     } catch (e: any) {
       log('move failed', src, e);
       errors.push(`${basename(src)}: ${e?.code === 'EBUSY' ? 'in use by another app' : String(e?.message ?? e)}`);
@@ -138,7 +140,14 @@ async function move(paths: string[]) {
     job.done([]);
     return hud.notice(`Already in ${basename(dest) || dest}`);
   }
-  job.done(moved, errors);
+  // Undo moves everything back (never to the Recycle Bin: these are the user's originals).
+  job.done(moved, errors, async () => {
+    for (const [now, original] of from) {
+      if (!existsSync(now)) continue;
+      const back = existsSync(original) ? freeName(dirname(original), basename(original)) : original;
+      await moveOne(now, back);
+    }
+  });
 }
 
 // ------------------------------------------------------------------- terminal

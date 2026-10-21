@@ -112,6 +112,16 @@ body {
 .out button:hover {
   border-color: var(--accent);
 }
+.out button.undo {
+  margin-left: auto;
+  background: transparent;
+  border-color: transparent;
+  color: var(--ink-2);
+}
+.out button.undo:hover {
+  border-color: var(--line-strong);
+  color: var(--ink);
+}
 .state {
   color: var(--ok);
   display: inline-flex;

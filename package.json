@@ -25,22 +25,22 @@
   },
   "homepage": "https://github.com/Shilpanshu/orange#readme",
   "devDependencies": {
+    "@mediapipe/tasks-vision": "^1.1.1",
     "@types/node": "^26.6.5",
     "electron": "^45.0.0",
     "electron-builder": "^26.15.3",
+    "electron-updater": "^6.8.9",
     "esbuild": "^0.28.2",
+    "jszip": "^3.10.2",
+    "pdf-lib": "^1.17.1",
     "typescript": "^7.0.2"
   },
   "dependencies": {
     "@huggingface/transformers": "^4.3.1",
-    "@mediapipe/tasks-vision": "^1.1.1",
     "@tesseract.js-data/eng": "^1.0.0",
-    "electron-updater": "^6.8.9",
     "exceljs": "^4.4.0",
     "heic-convert": "^2.1.0",
     "heic-decode": "^2.1.0",
-    "jszip": "^3.10.2",
-    "pdf-lib": "^1.17.1",
     "pdfjs-dist": "^6.4.299",
     "sharp": "^0.35.5",
     "tesseract.js": "^7.0.0",
@@ -65,24 +65,49 @@
     "files": [
       "dist/**/*",
       "package.json",
-      "!**/*.map"
+      "!**/*.map",
+      "!**/node_modules/**/*.{md,markdown,ts,mts,cts,d.ts,d.mts,flow,tsbuildinfo}",
+      "!**/node_modules/**/{test,tests,__tests__,example,examples,.github,.vscode}/**",
+      "!node_modules/@napi-rs/**",
+      "!node_modules/@tesseract.js-data/eng/4.0.0/**",
+      "!node_modules/onnxruntime-web/**",
+      "!node_modules/onnxruntime-node/bin/napi-v*/{darwin,linux}/**",
+      "!node_modules/onnxruntime-node/bin/napi-v*/win32/arm64/**",
+      "!node_modules/onnxruntime-node/script/**",
+      "!node_modules/@huggingface/transformers/{src,types}/**",
+      "!node_modules/@huggingface/transformers/dist/{transformers.js,transformers.min.js,transformers.web.js,transformers.web.min.js,transformers.node.min.cjs,transformers.node.min.mjs,ort-wasm*}",
+      "!node_modules/tesseract.js-core/*.wasm.js",
+      "!node_modules/tesseract.js-core/tesseract-core{,-simd,-relaxedsimd,-lstm}.{js,wasm}",
+      "!node_modules/tesseract.js/dist/**",
+      "!node_modules/pdfjs-dist/{build,web,types,image_decoders}/**",
+      "!node_modules/pdfjs-dist/legacy/{web,image_decoders}/**",
+      "!node_modules/pdfjs-dist/legacy/build/{pdf.min.mjs,pdf.worker.min.mjs,pdf.sandbox.min.mjs}",
+      "!node_modules/exceljs/dist/**",
+      "!node_modules/libheif-js/libheif/**",
+      "!node_modules/libheif-js/libheif-wasm/{libheif-bundle.mjs,libheif.js,libheif.wasm}",
+      "!node_modules/uiohook-napi/{libuiohook,src}/**",
+      "!node_modules/uiohook-napi/prebuilds/{darwin,linux,win32-arm64}*/**",
+      "!node_modules/uiohook-napi/build/Release/{obj,.deps}/**",
+      "!node_modules/uiohook-napi/build/Release/*.{pdb,ipdb,iobj,lib,exp}",
+      "!node_modules/uiohook-napi/build/*.{vcxproj,vcxproj.filters,sln}"
     ],
     "asar": true,
     "asarUnpack": [
       "node_modules/sharp/**/*",
       "node_modules/@img/**/*",
       "node_modules/uiohook-napi/**/*",
+      "node_modules/onnxruntime-node/**/*",
       "node_modules/@tesseract.js-data/**/*",
       "node_modules/tesseract.js-core/**/*",
-      "node_modules/tesseract.js/**/*",
-      "node_modules/@mediapipe/**/*"
+      "node_modules/tesseract.js/**/*"
     ],
     "extraResources": [
       {
         "from": "vendor/bin",
         "to": "bin",
         "filter": [
-          "**/*"
+          "**/*",
+          "!pandoc.exe"
         ]
       }
     ],
@@ -117,6 +142,23 @@
         "owner": "Shilpanshu",
         "repo": "orange",
         "releaseType": "release"
+      }
+    ],
+    "electronLanguages": [
+      "en-US"
+    ],
+    "compression": "maximum",
+    "extraFiles": [
+      {
+        "from": "vendor/bin/gs/bin",
+        "to": ".",
+        "filter": [
+          "vcruntime140.dll",
+          "vcruntime140_1.dll",
+          "msvcp140.dll",
+          "msvcp140_1.dll",
+          "msvcp140_atomic_wait.dll"
+        ]
       }
     ]
   }

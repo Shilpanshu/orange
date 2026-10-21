@@ -1,6 +1,6 @@
 // Compress: one window for any selection. Each kind of file present gets its own small set of
 // options; the list shows the original size and an estimate that updates as settings change.
-import { api, base, checkbox, field, fmtBytes, h, numberInput, section, segmented, shell, slider } from '../../shared/ui';
+import { api, base, checkbox, enablePresets, field, fmtBytes, h, numberInput, section, segmented, shell, slider } from '../../shared/ui';
 import { icon } from '../../shared/icons';
 
 type CKind = 'image' | 'video' | 'audio' | 'pdf' | 'office' | 'zip';
@@ -41,6 +41,8 @@ export async function compress(paths: string[]) {
     pdf: { level: 'ebook' as Level },
     office: { level: 'ebook' as Level },
   };
+  // "Save as preset…" in the footer saves these settings as a Tools-wheel slice.
+  enablePresets('compress', () => structuredClone(opts));
   const estimates = new Map<string, number>(); // bytes; -1 = can't estimate
   let infos: Info[] = [];
   let done = false;

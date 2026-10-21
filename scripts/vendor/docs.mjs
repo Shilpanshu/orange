@@ -1,14 +1,18 @@
 // Fetches the document tool-chain into vendor/bin:
-//   vendor/bin/pandoc.exe             - from the pypandoc_binary wheel on PyPI (a plain zip)
+//   vendor/bin/pandoc.exe             - from the pypandoc_binary wheel on PyPI (a plain zip), with its
+//                                       62 MB COFF symbol table stripped (never loaded at run time)
+//   vendor/bin/pandoc.exe.zst         - the same exe, zstd-compressed (~22 MB). This is what the installer
+//                                       ships; Orange unpacks it on the first document conversion
+//                                       (src/main/engines/pandoc.ts). pandoc.exe itself is for `npm start`.
 //   vendor/bin/gs/bin/gswin64c.exe    - Ghostscript from conda-forge (a .conda = zip of tar.zst),
 //                                       plus the MSVC runtime DLLs it links against.
 // GitHub release downloads are unreliable on some networks; PyPI and anaconda.org are not.
 // Idempotent: anything already in place is skipped. Usage: node scripts/vendor/docs.mjs [--force]
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync, renameSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync, renameSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { zstdDecompressSync } from 'node:zlib';
+import { constants as zc, zstdCompressSync, zstdDecompressSync } from 'node:zlib';
 import { execFileSync } from 'node:child_process';
 import JSZip from 'jszip';
 
@@ -114,17 +118,116 @@ function writeFiles(files, destRoot, mapName) {
   return n;
 }
 
+/**
+ * Removes the COFF symbol table and the DWARF debug sections GNU ld leaves at the end of a PE image,
+ * like `strip --strip-debug`: none of it is mapped into memory, so the program runs exactly the same.
+ * An Authenticode signature (which can't survive any edit) is dropped with it. Returns null when there
+ * is nothing to strip.
+ */
+function stripPe(buf) {
+  if (buf.toString('latin1', 0, 2) !== 'MZ') throw new Error('not a PE file');
+  const pe = buf.readUInt32LE(0x3c);
+  if (buf.toString('latin1', pe, pe + 4) !== 'PE\0\0') throw new Error('bad PE signature');
+  const coff = pe + 4;
+  const nsec = buf.readUInt16LE(coff + 2);
+  const symPtr = buf.readUInt32LE(coff + 8);
+  const optSize = buf.readUInt16LE(coff + 16);
+  const opt = coff + 20;
+  if (buf.readUInt16LE(opt) !== 0x20b) throw new Error('not a PE32+ image');
+  if (!symPtr) return null;
+  const secAlign = buf.readUInt32LE(opt + 32);
+  const dirs = opt + 112;
+  const nDirs = buf.readUInt32LE(opt + 108);
+  const certOff = nDirs > 4 ? buf.readUInt32LE(dirs + 32) : 0;
+  const certSize = nDirs > 4 ? buf.readUInt32LE(dirs + 36) : 0;
+  const secs = [];
+  for (let i = 0, h = opt + optSize; i < nsec; i++, h += 40) {
+    secs.push({
+      h,
+      name: buf.toString('latin1', h, h + 8).replace(/\0.*$/s, ''),
+      vsize: buf.readUInt32LE(h + 8),
+      va: buf.readUInt32LE(h + 12),
+      rawSize: buf.readUInt32LE(h + 16),
+      rawPtr: buf.readUInt32LE(h + 20),
+      flags: buf.readUInt32LE(h + 36),
+    });
+  }
+  // Debug sections have string-table names ("/4", "/18"...), are discardable and come last.
+  let keep = secs.length;
+  while (keep > 0 && secs[keep - 1].name.startsWith('/') && secs[keep - 1].flags & 0x02000000) keep--;
+  const kept = secs.slice(0, keep);
+  const dropped = secs.slice(keep);
+  const dataEnd = Math.max(...kept.map((s) => s.rawPtr + s.rawSize));
+  if (dropped.some((s) => s.rawSize && s.rawPtr < dataEnd)) throw new Error('debug sections are not at the end');
+  if (symPtr < dataEnd) throw new Error('symbol table is not at the end');
+  if (certSize && (certOff < symPtr || certOff + certSize !== buf.length)) throw new Error('unexpected signature layout');
+  const end = Math.min(symPtr, ...dropped.filter((s) => s.rawSize).map((s) => s.rawPtr));
+  const out = Buffer.from(buf.subarray(0, end));
+  for (const s of dropped) out.fill(0, s.h, s.h + 40);
+  out.writeUInt16LE(keep, coff + 2);
+  out.writeUInt32LE(0, coff + 8); // PointerToSymbolTable
+  out.writeUInt32LE(0, coff + 12); // NumberOfSymbols
+  if (certSize) out.fill(0, dirs + 32, dirs + 40);
+  const last = kept[kept.length - 1];
+  out.writeUInt32LE(Math.ceil((last.va + Math.max(last.vsize, last.rawSize)) / secAlign) * secAlign, opt + 56); // SizeOfImage
+  // Keep the header checksum valid (Windows only checks it for drivers, but tools look at it).
+  out.writeUInt32LE(0, opt + 64);
+  let sum = 0;
+  for (let i = 0; i + 1 < out.length; i += 2) {
+    sum += out.readUInt16LE(i);
+    sum = (sum & 0xffff) + (sum >>> 16);
+  }
+  if (out.length & 1) sum += out[out.length - 1];
+  sum = (sum & 0xffff) + (sum >>> 16);
+  out.writeUInt32LE((sum + out.length) >>> 0, opt + 64);
+  return { buf: out, unsigned: certSize > 0 };
+}
+
+/** zstd at its strongest setting with a 128 MB window (pandoc.exe: 169 MB -> ~22 MB, unpacks in ~0.5 s). */
+function zstdPack(buf) {
+  return zstdCompressSync(buf, {
+    params: {
+      [zc.ZSTD_c_compressionLevel]: 19,
+      [zc.ZSTD_c_windowLog]: 27,
+      [zc.ZSTD_c_enableLongDistanceMatching]: 1,
+      [zc.ZSTD_c_checksumFlag]: 1,
+    },
+  });
+}
+
 async function pandoc() {
   const exe = join(binDir, 'pandoc.exe');
-  if (existsSync(exe) && !force) return console.log('pandoc: present');
-  console.log('pandoc:');
-  const zip = await JSZip.loadAsync(await download(PANDOC, 'pypandoc_binary wheel'));
-  const entry = Object.keys(zip.files).find((n) => /(^|\/)pandoc\.exe$/i.test(n));
-  if (!entry) throw new Error('pandoc.exe not found in the wheel');
-  mkdirSync(binDir, { recursive: true });
-  writeFileSync(exe + '.part', await zip.file(entry).async('nodebuffer'));
-  renameSync(exe + '.part', exe);
+  const packed = exe + '.zst';
+  if (!existsSync(exe) || force) {
+    console.log('pandoc:');
+    const zip = await JSZip.loadAsync(await download(PANDOC, 'pypandoc_binary wheel'));
+    const entry = Object.keys(zip.files).find((n) => /(^|\/)pandoc\.exe$/i.test(n));
+    if (!entry) throw new Error('pandoc.exe not found in the wheel');
+    mkdirSync(binDir, { recursive: true });
+    writeFileSync(exe + '.part', await zip.file(entry).async('nodebuffer'));
+    renameSync(exe + '.part', exe);
+  } else console.log('pandoc: present');
+
+  const raw = readFileSync(exe);
+  const stripped = stripPe(raw);
+  if (stripped) {
+    writeFileSync(exe + '.part', stripped.buf);
+    renameSync(exe + '.part', exe);
+    const mb = (n) => (n / 1e6).toFixed(1);
+    console.log(`  stripped debug symbols: ${mb(raw.length)} MB -> ${mb(stripped.buf.length)} MB` + (stripped.unsigned ? ' (signature removed)' : ''));
+  }
   console.log('  ' + execFileSync(exe, ['--version']).toString().split(/\r?\n/)[0]);
+
+  if (!existsSync(packed) || force || statSync(packed).mtimeMs < statSync(exe).mtimeMs) {
+    process.stdout.write('  compressing for the installer (zstd -19, takes a minute or two)... ');
+    const body = readFileSync(exe);
+    const z = zstdPack(body);
+    const back = zstdDecompressSync(z, { params: { [zc.ZSTD_d_windowLogMax]: 27 } });
+    if (!back.equals(body)) throw new Error('pandoc.exe.zst does not round-trip');
+    writeFileSync(packed + '.part', z);
+    renameSync(packed + '.part', packed);
+    console.log(`${(z.length / 1e6).toFixed(1)} MB`);
+  }
 }
 
 async function ghostscript() {
@@ -170,11 +273,12 @@ async function licences() {
   }
   // Pandoc: the PyPI wheel has no licence file, so point to the canonical text and source.
   const pandocNotice = join(binDir, 'pandoc-LICENSE.txt');
-  if (!existsSync(pandocNotice) || force) {
+  {
     writeFileSync(
       pandocNotice,
       [
-        'Pandoc (pandoc.exe) is distributed unmodified with Orange.',
+        'Pandoc (pandoc.exe) is distributed with Orange. Its code is unmodified: only the debugging symbol',
+        'table was removed to save space, and it is stored zstd-compressed until first use.',
         'Copyright (C) John MacFarlane and contributors.',
         '',
         'Licence: GNU General Public License, version 2 or (at your option) any later version.',
@@ -186,7 +290,7 @@ async function licences() {
         '',
       ].join('\n'),
     );
-    console.log('pandoc licence notice: written');
+    console.log('pandoc licence notice: up to date');
   }
 }
 

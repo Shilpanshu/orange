@@ -1,10 +1,12 @@
 // The radial menu window. One transparent, always-on-top window is created at startup and
 // re-positioned under the cursor on demand, so opening it costs a single setBounds + show.
-import { BrowserWindow, screen, ipcMain } from 'electron';
-import { join } from 'node:path';
+import { BrowserWindow, screen, ipcMain, nativeImage, app } from 'electron';
+import { join, basename } from 'node:path';
+import type { WheelPrefs } from '../shared/catalog';
 import { page, distDir } from './paths';
 import type { WheelKind } from '../shared/catalog';
 import { log } from './log';
+import { settings } from './settings';
 
 const SIZE = 440; // DIP; must match --wheel-size in wheel.css
 
@@ -15,6 +17,24 @@ export interface WheelOpen {
   mode: WheelMode;
   // Known paths (click mode, from the Explorer selection). In drag mode the renderer only sees MIME types.
   paths?: string[];
+  prefs?: WheelPrefs;
+}
+
+/** A small Explorer-style thumbnail for the wheel's centre (falls back to the file-type icon). */
+async function previewFor(paths: string[]): Promise<{ thumb: string; name: string; count: number } | null> {
+  if (!paths.length) return null;
+  const first = paths[0];
+  let img: Electron.NativeImage | null = null;
+  try {
+    img = await nativeImage.createThumbnailFromPath(first, { width: 96, height: 96 });
+  } catch {
+    try {
+      img = await app.getFileIcon(first, { size: 'large' });
+    } catch {
+      img = null;
+    }
+  }
+  return { thumb: img && !img.isEmpty() ? img.toDataURL() : '', name: basename(first), count: paths.length };
 }
 
 export class Wheel {
@@ -79,11 +99,20 @@ export class Wheel {
       this.win.setAlwaysOnTop(true, 'screen-saver');
     }
     this.isOpen = true;
+    if (opts.paths?.length) this.sendPreview(opts.paths);
   }
 
   /** Exact paths of the dragged files (from the Explorer selection) once known. */
   setPaths(paths: string[]) {
-    if (this.isOpen) this.win.webContents.send('wheel:paths', paths);
+    if (!this.isOpen) return;
+    this.win.webContents.send('wheel:paths', paths);
+    this.sendPreview(paths);
+  }
+
+  private sendPreview(paths: string[]) {
+    previewFor(paths).then((p) => {
+      if (p && this.isOpen) this.win.webContents.send('wheel:preview', p);
+    });
   }
 
   nav(key: string) {
@@ -115,4 +144,13 @@ export function registerWheelIpc(wheel: Wheel, onChoose: (itemId: string, paths:
     if (itemId && paths?.length) onChoose(itemId, paths);
   });
   ipcMain.on('wheel:dismiss', () => wheel.close());
+  // Right-click a slice (click mode) to pin or unpin it for this kind of file.
+  ipcMain.handle('wheel:togglePin', (_e, key: string, itemId: string) => {
+    const favorites = { ...settings.get().favorites };
+    const list = (favorites[key] ?? []).filter((x) => x !== itemId);
+    if (list.length === (favorites[key] ?? []).length) list.push(itemId);
+    favorites[key] = list;
+    settings.set({ favorites });
+    return favorites;
+  });
 }

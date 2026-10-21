@@ -1,5 +1,6 @@
 // Small DOM helpers shared by tool windows. No framework: windows open fast.
 import { icon } from './icons';
+import { TOOLS } from '../../shared/catalog';
 
 declare const orange: import('../../preload/preload').OrangeApi;
 export const api = () => orange;
@@ -49,7 +50,7 @@ export function shell(opts: { title: string; file?: string; layout?: 'split' | '
   const status = h('span', { class: 'status' });
   const cancel = h('button', { class: 'btn', onclick: () => orange.send('window:close') }, 'Cancel');
   const primary = h('button', { class: 'btn primary' }, 'Save');
-  const footer = h('div', { class: 'footer' }, status, h('div', { class: 'spacer' }), cancel, primary);
+  const footer = h('div', { class: 'footer' }, status, presetSlot(primary, status), h('div', { class: 'spacer' }), cancel, primary);
   document.body.append(bar, main, footer);
   document.title = opts.title;
   // Esc closes, Ctrl+Enter / Ctrl+S triggers the primary action.
@@ -212,6 +213,8 @@ export function sortable(list: HTMLElement, onReorder: (from: number, to: number
 
 /** Run a tool in the main process; disables the button and closes the window on success. */
 export async function runAndClose(button: HTMLButtonElement, toolId: string, paths: string[], options: any, status?: HTMLElement) {
+  // "Save as preset" clicks the primary button to read the options without running anything.
+  if (capturing) return capturing(toolId, options);
   button.disabled = true;
   const prev = button.textContent;
   button.textContent = 'Working…';
@@ -244,4 +247,125 @@ export async function loadImage(path: string): Promise<HTMLImageElement> {
 
 export function args<T = any>(): T {
   return orange.args as T;
+}
+
+// ------------------------------------------------------------------ presets
+// "Save as preset…" in the footer stores the window's current options under a name; the preset
+// then appears on the Tools wheel. Tools whose options don't depend on one particular file get
+// the link automatically: the link presses the primary button with runAndClose switched into a
+// capture mode, so no tool page needs changing. Other pages can opt in with enablePresets().
+
+/** Tools whose runAndClose options make sense for any file of the right kind. */
+const PRESET_TOOLS = new Set(['speedVideo', 'normalizeAudio', 'audioChannels', 'joinAudio', 'audioToVideo', 'cropImage', 'createPdf']);
+
+let capturing: ((toolId: string, options: unknown) => void) | null = null;
+let presetState: { slot: HTMLElement; primary: HTMLButtonElement; status: HTMLElement; tool: string; get?: () => unknown } | null = null;
+
+function presetSlot(primary: HTMLButtonElement, status: HTMLElement) {
+  const slot = h('div', { class: 'preset-slot', hidden: true });
+  const tool = String((orange.args as { tool?: string }).tool ?? '');
+  presetState = { slot, primary, status, tool };
+  if (PRESET_TOOLS.has(tool)) showPresetLink();
+  return slot;
+}
+
+/** Shows "Save as preset…" for a page that gathers its options itself (not via runAndClose). */
+export function enablePresets(toolId: string, getOptions: () => unknown) {
+  if (!presetState) return;
+  presetState.tool = toolId;
+  presetState.get = getOptions;
+  showPresetLink();
+}
+
+function injectPresetStyles() {
+  if (document.getElementById('preset-styles')) return;
+  const css = `
+.preset-slot{display:flex;align-items:center;gap:6px;min-width:0}
+.preset-slot[hidden]{display:none}
+.preset-slot .preset-link{color:var(--accent-strong);font-weight:500}
+.preset-slot input[type='text']{width:170px;height:26px;font-size:12px}
+.preset-slot .btn.small.icon{width:26px;padding:0;color:var(--ink-2)}
+.preset-slot .preset-note{color:var(--ink-2);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.preset-slot .preset-note.bad{color:var(--danger)}`;
+  document.head.append(h('style', { id: 'preset-styles' }, css));
+}
+
+function showPresetLink(note?: { text: string; bad?: boolean }) {
+  const st = presetState;
+  if (!st) return;
+  injectPresetStyles();
+  st.slot.hidden = false;
+  st.status.hidden = false;
+  const link = h('button', { class: 'btn small ghost preset-link', title: 'Keep these settings as a slice on the Tools wheel', onclick: () => void startNaming() }, 'Save as preset…');
+  st.slot.replaceChildren(link);
+  if (note) {
+    const n = h('span', { class: `preset-note${note.bad ? ' bad' : ''}`, role: 'status' }, note.text);
+    st.slot.replaceChildren(n);
+    setTimeout(() => {
+      if (n.isConnected) st.slot.replaceChildren(link);
+    }, 2600);
+  }
+}
+
+/** The options the window would run with right now. */
+function currentOptions(): Promise<unknown> {
+  const st = presetState!;
+  if (st.get) return Promise.resolve(st.get());
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      capturing = null;
+      reject(new Error('Not ready yet'));
+    }, 800);
+    capturing = (toolId, options) => {
+      clearTimeout(timer);
+      if (toolId) st.tool = toolId;
+      capturing = null;
+      resolve(options);
+    };
+    st.primary.click();
+  });
+}
+
+async function startNaming() {
+  const st = presetState;
+  if (!st) return;
+  let options: unknown;
+  try {
+    options = JSON.parse(JSON.stringify(await currentOptions()));
+  } catch {
+    return showPresetLink({ text: 'Set the options first', bad: true });
+  }
+  const label = TOOLS.find((t) => t.id === st.tool)?.label ?? 'Preset';
+  const name = h('input', { type: 'text', maxlength: 60, placeholder: 'Preset name', 'aria-label': 'Preset name' }) as HTMLInputElement;
+  name.value = label;
+  const save = h('button', { class: 'btn small' }, 'Save') as HTMLButtonElement;
+  const cancel = h('button', { class: 'btn small icon ghost', title: "Don't save", 'aria-label': "Don't save the preset", html: icon('close', 18) });
+  const commit = async () => {
+    const n = name.value.trim();
+    if (!n) return name.focus();
+    save.disabled = true;
+    try {
+      await orange.invoke('presets:save', { name: n, tool: st.tool, options, paths: (orange.args as { paths?: string[] }).paths ?? [] });
+      showPresetLink({ text: `Saved “${n}” to the Tools wheel` });
+    } catch (e: any) {
+      save.disabled = false;
+      showPresetLink({ text: e?.message ?? "Couldn't save the preset", bad: true });
+    }
+  };
+  save.onclick = commit;
+  cancel.onclick = () => showPresetLink();
+  name.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.ctrlKey) {
+      e.preventDefault();
+      void commit();
+    } else if (e.key === 'Escape') {
+      e.stopPropagation();
+      showPresetLink();
+    }
+  });
+  // Room for the name field: the status text comes back afterwards.
+  st.status.hidden = true;
+  st.slot.replaceChildren(name, save, cancel);
+  name.focus();
+  name.select();
 }

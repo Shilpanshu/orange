@@ -10,6 +10,7 @@ interface Row {
   note?: string;
   outputs?: string[];
   errors?: string[];
+  undoable?: boolean;
 }
 
 const root = document.getElementById('rows')!;
@@ -34,13 +35,16 @@ function rowHtml(r: Row): string {
     note = n === 1 ? 'Saved' : `Saved ${n} files`;
     if (r.errors?.length) note += ` · ${r.errors.length} failed\n${r.errors.join('\n')}`;
   }
+  const undo = r.state === 'done' && r.undoable ? `<button class="undo" data-undo="${r.id}" title="Move the new files to the Recycle Bin">${icon('undo', 14)}Undo</button>` : '';
   const outs =
     r.state === 'done' && r.outputs?.length
       ? `<div class="out">${r.outputs
           .slice(0, 3)
           .map((p) => `<button data-reveal="${esc(p)}" title="Show in folder">${icon('folder', 14)}${esc(base(p))}</button>`)
-          .join('')}${r.outputs.length > 3 ? `<button data-reveal="${esc(r.outputs[0])}">+${r.outputs.length - 3} more</button>` : ''}</div>`
-      : '';
+          .join('')}${r.outputs.length > 3 ? `<button data-reveal="${esc(r.outputs[0])}">+${r.outputs.length - 3} more</button>` : ''}${undo}</div>`
+      : undo
+        ? `<div class="out">${undo}</div>`
+        : '';
   return `<div class="row ${r.state}" data-id="${r.id}">
     <div class="title">${esc(r.state === 'done' ? r.title.replace(/^Converting /, 'Converted ') : r.title)}</div>${right}
     ${note ? `<div class="note">${esc(note)}</div>` : ''}${bar}${outs}</div>`;
@@ -70,6 +74,34 @@ root.addEventListener('click', (e) => {
   if (t.dataset.cancel) orange.send('hud:cancel', Number(t.dataset.cancel));
   if (t.dataset.dismiss) orange.send('hud:dismiss', Number(t.dataset.dismiss));
   if (t.dataset.reveal) orange.send('hud:reveal', t.dataset.reveal);
+  if (t.dataset.undo) {
+    (t as HTMLButtonElement).disabled = true;
+    orange.send('hud:undo', Number(t.dataset.undo));
+  }
+});
+
+// A short, quiet two-note chime when a job finishes (only when Settings → Sounds is on).
+let audio: AudioContext | null = null;
+orange.on('hud:chime', () => {
+  try {
+    audio ??= new AudioContext();
+    const t0 = audio.currentTime;
+    for (const [i, freq] of [880, 1318.5].entries()) {
+      const osc = audio.createOscillator();
+      const gain = audio.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = freq;
+      const start = t0 + i * 0.09;
+      gain.gain.setValueAtTime(0, start);
+      gain.gain.linearRampToValueAtTime(0.06, start + 0.012);
+      gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.32);
+      osc.connect(gain).connect(audio.destination);
+      osc.start(start);
+      osc.stop(start + 0.34);
+    }
+  } catch {
+    /* audio is optional */
+  }
 });
 root.addEventListener('dblclick', (e) => {
   const t = (e.target as HTMLElement).closest<HTMLElement>('[data-reveal]');

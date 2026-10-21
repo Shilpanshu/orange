@@ -196,15 +196,49 @@ export const ACTIONS: ActionDef[] = [
 ];
 
 export interface WheelItem {
-  id: string; // "to:png" | tool id | action id
+  id: string; // "to:png" | "tool:<id>" | "action:<id>" | "preset:<id>"
   label: string;
   sub?: string;
   icon?: string;
+  pinned?: boolean;
+  recent?: boolean;
 }
 
-export function wheelItems(wheel: WheelKind, exts: string[], hasFolder = false): WheelItem[] {
-  if (wheel === 'actions') return ACTIONS.map((a) => ({ id: `action:${a.id}`, label: a.label, icon: a.icon, sub: a.blurb }));
-  if (wheel === 'tools') return toolsFor(exts, hasFolder).map((x) => ({ id: `tool:${x.id}`, label: x.label, icon: x.icon, sub: x.blurb }));
-  if (hasFolder) return [{ id: 'to:zip', label: 'ZIP', sub: 'Compress folder' }];
-  return conversionTargets(exts).map((x) => ({ id: x.id, label: x.label, sub: x.sub }));
+/** User preferences that shape the wheel (sent by the main process each time it opens). */
+export interface WheelPrefs {
+  favorites: Record<string, string[]>; // per "wheel:kind" key, e.g. "convert:image"
+  recents: Record<string, string>; // per extension, e.g. heic → "to:jpg"
+  presets: { id: string; name: string; tool: string; kinds: string[] }[];
+}
+
+/** Key under which pins are stored: one list per wheel and file kind. */
+export function pinKey(wheel: WheelKind, exts: string[], hasFolder = false): string {
+  const kinds = new Set(exts.map(kindOfExt));
+  if (hasFolder) kinds.add('folder');
+  return `${wheel}:${kinds.size === 1 ? [...kinds][0] : 'mixed'}`;
+}
+
+export function wheelItems(wheel: WheelKind, exts: string[], hasFolder = false, prefs?: WheelPrefs): WheelItem[] {
+  let items: WheelItem[];
+  if (wheel === 'actions') items = ACTIONS.map((a) => ({ id: `action:${a.id}`, label: a.label, icon: a.icon, sub: a.blurb }));
+  else if (wheel === 'tools') {
+    items = toolsFor(exts, hasFolder).map((x) => ({ id: `tool:${x.id}`, label: x.label, icon: x.icon, sub: x.blurb }));
+    // Saved presets whose tool applies to these files become their own slices.
+    const toolIds = new Set(items.map((i) => i.id.slice(5)));
+    for (const p of prefs?.presets ?? []) {
+      if (toolIds.has(p.tool)) items.push({ id: `preset:${p.id}`, label: p.name, icon: 'star', sub: `Preset · ${TOOLS.find((t) => t.id === p.tool)?.label ?? p.tool}` });
+    }
+  } else if (hasFolder) items = [{ id: 'to:zip', label: 'ZIP', sub: 'Compress folder' }];
+  else items = conversionTargets(exts).map((x) => ({ id: x.id, label: x.label, sub: x.sub }));
+  if (!prefs) return items;
+
+  // Pinned slices first, in the order they were pinned; everything else keeps its natural order.
+  const pins = prefs.favorites[pinKey(wheel, exts, hasFolder)] ?? [];
+  const rank = (it: WheelItem) => {
+    const i = pins.indexOf(it.id);
+    return i < 0 ? Number.MAX_SAFE_INTEGER : i;
+  };
+  items = items.map((it, n) => ({ it, n })).sort((a, b) => rank(a.it) - rank(b.it) || a.n - b.n).map(({ it }) => it);
+  const recent = exts.length && new Set(exts).size === 1 ? prefs.recents[exts[0]] : undefined;
+  return items.map((it) => ({ ...it, pinned: pins.includes(it.id), recent: it.id === recent }));
 }

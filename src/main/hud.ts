@@ -2,6 +2,7 @@
 import { BrowserWindow, screen, ipcMain, shell } from 'electron';
 import { join, basename } from 'node:path';
 import { page, distDir } from './paths';
+import { settings } from './settings';
 
 const W = 360;
 
@@ -13,6 +14,7 @@ interface Row {
   note?: string;
   outputs?: string[];
   errors?: string[];
+  undoable?: boolean;
 }
 
 class Hud {
@@ -100,8 +102,18 @@ class Hud {
         if (note !== undefined) r.note = note;
         this.flush();
       },
-      done: (outputs: string[], errors: string[] = []) =>
-        this.finish(id, { state: 'done', progress: 1, outputs, errors, note: undefined }, errors.length ? 12000 : 6000),
+      /**
+       * Mark the job finished. By default Undo moves `outputs` to the Recycle Bin; tools that
+       * change files in place (e.g. Rename) pass their own `undo` instead.
+       */
+      done: (outputs: string[], errors: string[] = [], undo?: (() => Promise<void>) | null) => {
+        // null = this job changed files in place and can't be undone safely: no button.
+        const fn = undo === null ? null : (undo ?? (outputs.length ? () => this.trash(outputs) : null));
+        if (fn) this.undos.set(id, fn);
+        this.undoKinds.set(id, undo ? 'custom' : 'trash');
+        if (settings.get().sounds && outputs.length) this.win?.webContents.send('hud:chime');
+        this.finish(id, { state: 'done', progress: 1, outputs, errors, note: undefined, undoable: !!fn }, errors.length ? 12000 : 8000);
+      },
       failed: (msg: string) => this.finish(id, { state: 'failed', note: msg }, 12000),
       cancelled: () => this.finish(id, { state: 'cancelled', note: 'Cancelled' }, 1800),
     };
@@ -113,7 +125,31 @@ class Hud {
     this.finish(id, {}, 4000);
   }
 
+  private undos = new Map<number, () => Promise<void>>();
+  private undoKinds = new Map<number, 'trash' | 'custom'>();
+
+  private async trash(paths: string[]) {
+    for (const p of paths) await shell.trashItem(p).catch(() => {});
+  }
+
   register() {
+    ipcMain.on('hud:undo', async (_e, id: number) => {
+      const undo = this.undos.get(id);
+      const r = this.rows.get(id);
+      if (!undo || !r) return;
+      this.undos.delete(id);
+      try {
+        await undo();
+        const n = r.outputs?.length ?? 0;
+        const title =
+          this.undoKinds.get(id) === 'trash' && n
+            ? `Undone: ${n === 1 ? 'the new file was' : `${n} new files were`} moved to the Recycle Bin`
+            : 'Undone';
+        this.finish(id, { state: 'notice', title, undoable: false }, 3500);
+      } catch (e: any) {
+        this.finish(id, { state: 'failed', note: `Couldn't undo: ${e?.message ?? e}`, undoable: false }, 8000);
+      }
+    });
     ipcMain.on('hud:height', (_e, h: number) => this.place(h));
     ipcMain.on('hud:cancel', (_e, id: number) => this.cancels.get(id)?.());
     ipcMain.on('hud:dismiss', (_e, id: number) => {

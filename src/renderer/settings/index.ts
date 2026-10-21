@@ -1,5 +1,6 @@
 import { h, segmented } from '../shared/ui';
 import { icon } from '../shared/icons';
+import { renderAutomation } from './automation';
 
 declare const orange: import('../../preload/preload').OrangeApi;
 
@@ -7,6 +8,7 @@ type ModKey = 'shift' | 'ctrl' | 'alt' | 'none';
 interface Settings {
   keys: { convert: ModKey; tools: ModKey; actions: ModKey };
   selectionHotkey: string;
+  clipboardHotkey: string;
   output: { mode: 'beside' | 'folder'; folder: string };
   revealWhenDone: boolean;
   jpgQuality: number;
@@ -27,6 +29,7 @@ const TABS: { id: string; label: string; icon: string; render: () => Node | Prom
   { id: 'general', label: 'General', icon: 'settings', render: general },
   { id: 'keys', label: 'Shortcuts', icon: 'grip', render: keys },
   { id: 'output', label: 'Saving', icon: 'folder', render: output },
+  { id: 'automation', label: 'Automation', icon: 'clipboard', render: () => renderAutomation(orange) },
   { id: 'engines', label: 'Engines', icon: 'compress', render: engines },
   { id: 'about', label: 'About', icon: 'file', render: about },
 ];
@@ -190,6 +193,30 @@ function general() {
   );
 }
 
+/** A field that records a global shortcut when focused. Backspace clears it, Esc cancels. */
+function hotkeyInput(field: 'selectionHotkey' | 'clipboardHotkey') {
+  const show = () => (s[field] || 'Off').replace('Control', 'Ctrl');
+  const input = h('input', { type: 'text', class: 'hotkey-input', readonly: true, value: show() }) as HTMLInputElement;
+  input.addEventListener('keydown', (e) => {
+    e.preventDefault();
+    if (e.key === 'Escape') return input.blur();
+    if (e.key === 'Backspace') {
+      save({ [field]: '' } as Partial<Settings>).then(() => (input.value = 'Off'));
+      return;
+    }
+    if (['Control', 'Shift', 'Alt', 'Meta'].includes(e.key)) return;
+    const parts = [e.ctrlKey && 'Control', e.altKey && 'Alt', e.shiftKey && 'Shift', e.metaKey && 'Super'].filter(Boolean) as string[];
+    if (!parts.length) return;
+    const key = e.key === ' ' ? 'Space' : e.key.length === 1 ? e.key.toUpperCase() : e.key;
+    const accel = [...parts, key].join('+');
+    input.value = accel.replace('Control', 'Ctrl');
+    save({ [field]: accel } as Partial<Settings>);
+  });
+  input.addEventListener('focus', () => (input.value = 'Press a shortcut…'));
+  input.addEventListener('blur', () => (input.value = show()));
+  return input;
+}
+
 function keys() {
   const mods: [ModKey, string][] = [
     ['shift', 'Shift'],
@@ -205,25 +232,8 @@ function keys() {
     }
     save({ keys: next }).then(() => show('keys'));
   };
-  const hk = h('input', { type: 'text', class: 'hotkey-input', readonly: true, value: s.selectionHotkey.replace('Control', 'Ctrl') }) as HTMLInputElement;
-  hk.addEventListener('keydown', (e) => {
-    e.preventDefault();
-    if (e.key === 'Escape') return hk.blur();
-    if (e.key === 'Backspace') {
-      hk.value = '';
-      save({ selectionHotkey: '' });
-      return;
-    }
-    if (['Control', 'Shift', 'Alt', 'Meta'].includes(e.key)) return;
-    const parts = [e.ctrlKey && 'Control', e.altKey && 'Alt', e.shiftKey && 'Shift', e.metaKey && 'Super'].filter(Boolean) as string[];
-    if (!parts.length) return;
-    const key = e.key === ' ' ? 'Space' : e.key.length === 1 ? e.key.toUpperCase() : e.key;
-    const accel = [...parts, key].join('+');
-    hk.value = accel.replace('Control', 'Ctrl');
-    save({ selectionHotkey: accel });
-  });
-  hk.addEventListener('focus', () => (hk.value = 'Press a shortcut…'));
-  hk.addEventListener('blur', () => (hk.value = s.selectionHotkey.replace('Control', 'Ctrl')));
+  const hk = hotkeyInput('selectionHotkey');
+  const cb = hotkeyInput('clipboardHotkey');
   return h(
     'div',
     {},
@@ -240,6 +250,12 @@ function keys() {
       'div',
       { class: 'group' },
       opt('Wheel for Explorer selection', 'Select files in Explorer, press this, click a slice. Backspace clears it.', hk),
+      opt('Convert the clipboard', 'Copy an image, text or files, press this, pick a format. Backspace clears it.', cb),
+    ),
+    h(
+      'p',
+      { class: 'muted' },
+      'Tip: in the wheel opened with this shortcut, right-click a slice to pin it. Pinned slices come first for that kind of file. The slice you used last is marked with a dot; drop on the centre of the wheel to repeat it.',
     ),
   );
 }

@@ -180,7 +180,16 @@ async function ensure7z() {
 
 // ----------------------------------------------------------------------------- ffmpeg
 
-const NEEDED_ENCODERS = ['libx264', 'libx265', 'libvpx-vp9', 'libaom-av1', 'libmp3lame', 'libopus', 'libvorbis', 'wmav2', 'wmv2', 'libwebp', 'aac', 'flac', 'gif'];
+// The hardware H.264/HEVC encoders are used for GPU encoding (src/main/engines/ffmpeg.ts → gpuEncoder()).
+//
+// Why the static "essentials" build and not a shared one: ffmpeg.exe + ffprobe.exe each carry the
+// libraries (~100 MB apiece), but gyan.dev only publishes a shared build of its *full* configuration,
+// whose DLLs alone are ~240 MB (avfilter 107 MB, avcodec 98 MB; measured with 9.0.2), more than the
+// two essentials exes together. Revisit if an essentials-shared build appears.
+const NEEDED_ENCODERS = [
+  'libx264', 'libx265', 'libvpx-vp9', 'libaom-av1', 'libmp3lame', 'libopus', 'libvorbis', 'wmav2', 'wmv2', 'libwebp', 'aac', 'flac', 'gif',
+  'h264_nvenc', 'hevc_nvenc', 'h264_qsv', 'hevc_qsv', 'h264_amf', 'hevc_amf',
+];
 
 function ffmpegOk() {
   const ff = join(binDir, 'ffmpeg.exe');

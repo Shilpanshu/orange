@@ -1,4 +1,4 @@
-import { wheelItems, extFromMime, extOf, type WheelItem, type WheelKind } from '../../shared/catalog';
+import { wheelItems, extFromMime, extOf, pinKey, type WheelItem, type WheelKind, type WheelPrefs } from '../../shared/catalog';
 import { icon } from '../shared/icons';
 
 declare const orange: import('../../preload/preload').OrangeApi;
@@ -14,6 +14,11 @@ const labels = document.getElementById('labels')!;
 const hubTitle = document.getElementById('hubTitle')!;
 const hubSub = document.getElementById('hubSub')!;
 const hubKeys = document.getElementById('hubKeys')!;
+const hub = document.getElementById('hub')!;
+const hubThumb = document.getElementById('hubThumb')!;
+const hubName = document.getElementById('hubName')!;
+let prefs: WheelPrefs | undefined;
+let recentIdx = -1; // slice chosen last time for this file type; pre-selected
 
 let wheel: WheelKind = 'convert';
 let mode: 'drag' | 'click' = 'drag';
@@ -44,8 +49,11 @@ function segPath(i: number, n: number) {
 }
 
 function render(swap = false) {
-  items = wheelItems(wheel, exts, hasFolder);
+  items = wheelItems(wheel, exts, hasFolder, prefs);
   const n = items.length;
+  recentIdx = items.findIndex((it) => it.recent);
+  // Pre-select last time's choice: dropping on the centre repeats it.
+  if (picked < 0 && recentIdx >= 0) picked = recentIdx;
   let svg = `<circle class="base" cx="${C}" cy="${C}" r="${R_OUT}"/>`;
   items.forEach((_, i) => (svg += `<path class="seg" data-i="${i}" d="${segPath(i, n)}"/>`));
   if (n > 1) {
@@ -66,7 +74,8 @@ function render(swap = false) {
       const body = it.icon
         ? `<span class="ic">${icon(it.icon, 20)}</span><span class="txt">${esc(it.label)}</span>`
         : `<span class="fmt">${esc(it.label)}</span>${it.sub ? `<span class="cap">${esc(it.sub)}</span>` : ''}`;
-      return `<div class="label${dense ? ' dense' : ''}" data-i="${i}" style="left:${p.x}px;top:${p.y}px">${body}</div>`;
+      const marks = `${it.pinned ? `<span class="pin" title="Pinned">${icon('star', 10, 2)}</span>` : ''}${it.recent ? '<span class="recent" title="Last used"></span>' : ''}`;
+      return `<div class="label${dense ? ' dense' : ''}${it.pinned ? ' pinned' : ''}" data-i="${i}" style="left:${p.x}px;top:${p.y}px">${marks}${body}</div>`;
     })
     .join('');
 
@@ -93,7 +102,34 @@ function setActive(i: number) {
   labels.querySelectorAll('.label').forEach((el) => el.classList.toggle('on', Number((el as HTMLElement).dataset.i) === on));
   const it = items[on];
   hubTitle.textContent = it ? (it.icon ? it.label : `To ${it.label}`) : TITLES[wheel];
-  hubSub.textContent = it ? (it.icon ? it.sub ?? '' : it.sub ?? describe()) : items.length ? describe() : emptyText();
+  if (it && i < 0 && on === recentIdx) hubSub.textContent = mode === 'click' ? 'Last used · Enter to repeat' : 'Last used · drop here to repeat';
+  else hubSub.textContent = it ? (it.icon ? it.sub ?? '' : it.sub ?? describe()) : items.length ? describe() : emptyText();
+}
+
+/** Flash the chosen slice so the drop visibly "lands" before the wheel fades. */
+function flash(i: number) {
+  ring.querySelector(`.seg[data-i="${i}"]`)?.classList.add('chosen');
+  labels.querySelector(`.label[data-i="${i}"]`)?.classList.add('chosen');
+  stage.classList.add('landed');
+}
+
+function choose(i: number, paths: string[]) {
+  flash(i);
+  orange.send('wheel:choose', items[i].id, paths);
+}
+
+function setPreview(p: { thumb: string; name: string; count: number } | null) {
+  hub.classList.toggle('has-preview', !!p);
+  if (!p) return;
+  hubThumb.replaceChildren();
+  if (p.thumb) {
+    const img = new Image();
+    img.className = 'hub-thumb';
+    img.alt = '';
+    img.src = p.thumb;
+    hubThumb.append(img);
+  }
+  hubName.textContent = p.count > 1 ? `${p.name} +${p.count - 1}` : p.name;
 }
 
 function describe() {
@@ -121,23 +157,32 @@ function show(open: boolean) {
 
 // ------------------------------------------------------------------ IPC in
 
-orange.on('wheel:open', (o: { wheel: WheelKind; mode: 'drag' | 'click'; paths?: string[]; cursor: { x: number; y: number } }) => {
-  const swap = stage.classList.contains('open') && o.wheel !== wheel;
-  wheel = o.wheel;
-  mode = o.mode;
-  picked = -1;
-  if (o.paths) {
-    knownPaths = o.paths;
-    exts = o.paths.map(extOf).filter(Boolean);
-    hasFolder = o.paths.some((p) => !extOf(p));
-  } else if (!stage.classList.contains('open')) {
-    knownPaths = undefined;
-  }
-  stage.style.setProperty('--ox', `${o.cursor.x}px`);
-  stage.style.setProperty('--oy', `${o.cursor.y}px`);
-  render(swap);
-  show(true);
-});
+orange.on(
+  'wheel:open',
+  (o: { wheel: WheelKind; mode: 'drag' | 'click'; paths?: string[]; prefs?: WheelPrefs; cursor: { x: number; y: number } }) => {
+    const wasOpen = stage.classList.contains('open');
+    const swap = wasOpen && o.wheel !== wheel;
+    wheel = o.wheel;
+    mode = o.mode;
+    picked = -1;
+    if (o.prefs) prefs = o.prefs;
+    if (!wasOpen) {
+      stage.classList.remove('landed');
+      setPreview(null);
+    }
+    if (o.paths) {
+      knownPaths = o.paths;
+      exts = o.paths.map(extOf).filter(Boolean);
+      hasFolder = o.paths.some((p) => !extOf(p));
+    } else if (!wasOpen) {
+      knownPaths = undefined;
+    }
+    stage.style.setProperty('--ox', `${o.cursor.x}px`);
+    stage.style.setProperty('--oy', `${o.cursor.y}px`);
+    render(swap);
+    show(true);
+  },
+);
 
 orange.on('wheel:close', () => {
   show(false);
@@ -146,19 +191,24 @@ orange.on('wheel:close', () => {
   dragCount = -1;
 });
 
-orange.on('wheel:nav', (key: string) => {
+orange.on('wheel:preview', (p: { thumb: string; name: string; count: number }) => setPreview(p));
+
+function nav(key: string) {
   const n = items.length;
   if (key === 'escape') return orange.send('wheel:dismiss');
   if (!n) return;
-  const cur = picked >= 0 ? picked : hover >= 0 ? hover : -1;
-  if (key === 'right' || key === 'down' || key === 'tab') picked = (cur + 1 + n) % n;
-  else if (key === 'left' || key === 'up') picked = cur < 0 ? n - 1 : (cur - 1 + n) % n;
-  else if (key === 'enter') {
-    if (mode === 'click' && cur >= 0 && knownPaths) orange.send('wheel:choose', items[cur].id, knownPaths);
+  const cur = picked >= 0 ? picked : hover;
+  if (key === 'enter') {
+    if (mode === 'click' && cur >= 0 && knownPaths) choose(cur, knownPaths);
     return;
   }
+  if (key === 'right' || key === 'down' || key === 'tab') picked = (cur + 1 + n) % n;
+  else picked = cur < 0 ? n - 1 : (cur - 1 + n) % n;
   setActive(-1);
-});
+}
+
+// Arrow keys during a drag come from the global keyboard hook in the main process.
+orange.on('wheel:nav', nav);
 
 // ------------------------------------------------------------- drag & drop
 
@@ -169,7 +219,10 @@ let dragCount = -1;
 
 function applySelection() {
   if (!selPaths || knownPaths) return false;
-  if (dragCount >= 0 && dragCount !== selPaths.length) return false;
+  if (dragCount >= 0 && dragCount !== selPaths.length) {
+    setPreview(null); // the selection isn't what's being dragged
+    return false;
+  }
   const next = selPaths.map(extOf).filter(Boolean);
   const folder = selPaths.some((p) => !extOf(p));
   if (next.join() !== exts.join() || folder !== hasFolder) {
@@ -205,7 +258,6 @@ function sniff(dt: DataTransfer | null) {
 
 window.addEventListener('dragenter', (e) => {
   e.preventDefault();
-  console.log('dragenter', JSON.stringify(Array.from(e.dataTransfer?.items ?? []).map((i) => [i.kind, i.type])));
   sniff(e.dataTransfer);
 });
 window.addEventListener('dragover', (e) => {
@@ -222,50 +274,43 @@ window.addEventListener('drop', (e) => {
   const files = Array.from(e.dataTransfer?.files ?? []);
   const paths = files.map((f) => orange.pathForFile(f)).filter(Boolean);
   let i = segmentAt(e.clientX, e.clientY);
-  if (i < 0) i = picked; // dropped on the hub after choosing with the arrow keys
+  if (i < 0) i = picked; // dropped on the centre: arrow-key choice or last time's choice
   if (i < 0 || !paths.length) return orange.send('wheel:dismiss');
   // The real file names may disagree with the MIME guess; the main process re-validates.
-  orange.send('wheel:choose', items[i].id, paths);
+  choose(i, paths);
 });
 
-// Click mode (opened from the Explorer selection hotkey).
+// ------------------------------------------- click mode (Explorer selection hotkey)
+
 window.addEventListener('mousemove', (e) => {
   if (mode !== 'click') return;
   const i = segmentAt(e.clientX, e.clientY);
   if (i !== hover) setActive(i);
 });
 window.addEventListener('mousedown', (e) => {
+  if (mode !== 'click' || e.button !== 0) return;
+  const i = segmentAt(e.clientX, e.clientY);
+  if (i >= 0 && knownPaths) choose(i, knownPaths);
+  else if (Math.hypot(e.clientX - C, e.clientY - C) < R_IN && picked >= 0 && knownPaths) choose(picked, knownPaths);
+  else orange.send('wheel:dismiss');
+});
+// Right-click a slice to pin it: pinned slices come first for this kind of file.
+window.addEventListener('contextmenu', async (e) => {
+  e.preventDefault();
   if (mode !== 'click') return;
   const i = segmentAt(e.clientX, e.clientY);
-  if (i >= 0 && knownPaths) orange.send('wheel:choose', items[i].id, knownPaths);
-  else orange.send('wheel:dismiss');
+  if (i < 0 || !prefs) return;
+  prefs = { ...prefs, favorites: await orange.invoke<WheelPrefs['favorites']>('wheel:togglePin', pinKey(wheel, exts, hasFolder), items[i].id) };
+  picked = -1;
+  render();
 });
 window.addEventListener('keydown', (e) => {
   if (mode !== 'click') return;
   const map: Record<string, string> = { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down', Enter: 'enter', Escape: 'escape', Tab: 'tab' };
   if (map[e.key]) {
     e.preventDefault();
-    (orange as any)._nav?.(map[e.key]);
-    window.dispatchEvent(new CustomEvent('orange-nav', { detail: map[e.key] }));
+    nav(map[e.key]);
   }
 });
-window.addEventListener('orange-nav', (e) => {
-  const key = (e as CustomEvent).detail as string;
-  // reuse the IPC handler path
-  navLocal(key);
-});
-function navLocal(key: string) {
-  const n = items.length;
-  if (key === 'escape') return orange.send('wheel:dismiss');
-  if (!n) return;
-  const cur = picked >= 0 ? picked : hover;
-  if (key === 'enter') {
-    if (cur >= 0 && knownPaths) orange.send('wheel:choose', items[cur].id, knownPaths);
-    return;
-  }
-  if (key === 'right' || key === 'down' || key === 'tab') picked = (cur + 1 + n) % n;
-  else picked = cur < 0 ? n - 1 : (cur - 1 + n) % n;
-  setActive(-1);
-}
 
 render();

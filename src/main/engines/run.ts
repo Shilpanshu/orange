@@ -13,6 +13,8 @@ export interface RunOptions {
   env?: Record<string, string>;
   /** Treat these exit codes as success too (e.g. 7z returns 1 for warnings). */
   okCodes?: number[];
+  /** Secrets (e.g. passwords) to mask wherever args or stderr are logged or reported. */
+  redact?: string[];
 }
 
 export interface RunResult {
@@ -60,8 +62,9 @@ export function run(exe: string, args: string[], opts: RunOptions = {}): Promise
       const c = code ?? -1;
       if (c === 0 || opts.okCodes?.includes(c)) resolve({ code: c, stdout, stderr });
       else {
-        log(`${exe} failed (${c})`, args.join(' '), stderr.slice(-2000));
-        reject(new Error(lastMeaningfulLine(stderr) || `${exe} exited with code ${c}`));
+        const mask = (t: string) => (opts.redact ?? []).filter(Boolean).reduce((acc, x) => acc.split(x).join('***'), t);
+        log(`${exe} failed (${c})`, mask(args.join(' ')), mask(stderr.slice(-2000)));
+        reject(new Error(mask(lastMeaningfulLine(stderr)) || `${exe} exited with code ${c}`));
       }
     });
     if (opts.input !== undefined) child.stdin.end(opts.input);

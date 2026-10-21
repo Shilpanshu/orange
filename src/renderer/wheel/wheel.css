@@ -155,3 +155,86 @@ body {
 .empty .hub-sub {
   color: var(--ink-3);
 }
+
+/* What's being dragged, shown in the centre once the Explorer selection is known. */
+.hub-file {
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  margin-bottom: 4px;
+  max-width: 112px;
+}
+.hub.has-preview .hub-file {
+  display: flex;
+}
+.hub.has-preview .hub-keys {
+  display: none;
+}
+.hub-thumb {
+  width: 34px;
+  height: 34px;
+  object-fit: cover;
+  border-radius: 5px;
+  box-shadow: 0 0 0 1px var(--line);
+}
+.hub-name {
+  font-size: 10.5px;
+  color: var(--ink-3);
+  max-width: 112px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Pinned and last-used marks on slices. */
+.label {
+  position: absolute;
+}
+.label .pin {
+  position: absolute;
+  top: -4px;
+  right: 18px;
+  color: var(--accent);
+  display: flex;
+}
+.label.on .pin {
+  color: var(--accent-ink);
+}
+.label .recent {
+  position: absolute;
+  bottom: -3px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.label.on .recent {
+  background: var(--accent-ink);
+}
+
+/* The drop lands: the chosen slice brightens, then the wheel fades a beat later. */
+.ring .seg.chosen {
+  fill: var(--accent-strong);
+  transition: none;
+}
+.stage.landed:not(.open) {
+  transition-delay: 90ms;
+}
+.label.chosen {
+  animation: land 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+@keyframes land {
+  40% {
+    transform: scale(1.08);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .label.chosen {
+    animation: none;
+  }
+  .stage {
+    transition: opacity 110ms linear;
+    transform: none;
+  }
+}

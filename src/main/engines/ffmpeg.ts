@@ -5,8 +5,15 @@
 //
 // `ffmpeg()` adds the boilerplate flags (-hide_banner -nostdin -y, quiet logging, machine-readable progress)
 // and turns ffmpeg's progress into ctx.progress(0..1). Errors reject with ffmpeg's last error line.
+import { spawn } from 'node:child_process';
+import { rmSync, statSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { run, type RunResult } from './run';
 import { UserError, type Ctx } from '../ops/types';
+import { bin } from '../paths';
+import { settings } from '../settings';
+import { log } from '../log';
 
 export interface StreamInfo {
   /** Absolute stream index in the file (use with `-map 0:<index>`). */
@@ -200,3 +207,136 @@ export function ts(seconds: number): string {
   const sec = (s % 60).toFixed(3).padStart(6, '0');
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${sec}`;
 }
+
+// ------------------------------------------------------------------ GPU encoders
+
+export type GpuCodec = 'h264' | 'hevc';
+
+/** Hardware encoders in order of preference: NVIDIA NVENC, Intel Quick Sync, AMD AMF. */
+const GPU_CANDIDATES: Record<GpuCodec, string[]> = {
+  h264: ['h264_nvenc', 'h264_qsv', 'h264_amf'],
+  hevc: ['hevc_nvenc', 'hevc_qsv', 'hevc_amf'],
+};
+
+/**
+ * Encoder settings for a hardware encoder at roughly the same visual quality as libx264/libx265 at
+ * `crf` (constant-quality modes throughout; the hardware scales run one step above x264's CRF).
+ */
+export function gpuQualityArgs(encoder: string, crf: number): string[] {
+  const q = String(Math.min(51, Math.max(1, Math.round(crf) + 1)));
+  if (encoder.endsWith('_nvenc')) return ['-preset', 'p5', '-tune', 'hq', '-rc', 'vbr', '-cq', q, '-b:v', '0'];
+  if (encoder.endsWith('_qsv')) return ['-preset', 'medium', '-global_quality', q];
+  if (encoder.endsWith('_amf')) return ['-quality', 'quality', '-rc', 'qvbr', '-qvbr_quality_level', q];
+  return [];
+}
+
+/** Pixel format to hand a hardware encoder for 8-bit 4:2:0 output (Quick Sync wants NV12). */
+export function gpuPixFmt(encoder: string): string {
+  return encoder.endsWith('_qsv') ? 'nv12' : 'yuv420p';
+}
+
+let gpuDetection: Promise<Record<GpuCodec, string | null>> | null = null;
+
+/**
+ * A one-second test encode with the same quality settings real jobs use; true when it produced a file.
+ * Spawned directly rather than through run(): a missing driver is the normal case and shouldn't fill
+ * the log with ffmpeg errors.
+ */
+function gpuWorks(encoder: string): Promise<boolean> {
+  const out = join(tmpdir(), `orange-gpu-probe-${process.pid}-${encoder}.mp4`);
+  const args = [
+    '-hide_banner', '-nostdin', '-y', '-loglevel', 'error',
+    '-f', 'lavfi', '-i', 'testsrc2=s=640x360:r=30:d=1',
+    '-c:v', encoder, ...gpuQualityArgs(encoder, 20), '-pix_fmt', gpuPixFmt(encoder),
+    '-f', 'mp4', out,
+  ];
+  return new Promise((resolve) => {
+    const done = (ok: boolean) => {
+      clearTimeout(timer);
+      let made = false;
+      try {
+        made = ok && statSync(out).size > 0;
+      } catch {
+        /* no file */
+      }
+      rmSync(out, { force: true });
+      resolve(made);
+    };
+    const child = spawn(bin('ffmpeg'), args, { windowsHide: true, stdio: 'ignore' });
+    // A wedged driver must not hold up every video job.
+    const timer = setTimeout(() => child.kill(), 20_000);
+    child.on('error', () => done(false));
+    child.on('close', (code) => done(code === 0));
+  });
+}
+
+/**
+ * Finds the working hardware encoders once per run (all candidates are tried in parallel; a missing
+ * driver fails in well under a second) and caches the answer.
+ */
+export function detectGpuEncoders(): Promise<Record<GpuCodec, string | null>> {
+  if (!gpuDetection) {
+    gpuDetection = (async () => {
+      const started = Date.now();
+      const pick = async (codec: GpuCodec) => {
+        const ok = await Promise.all(GPU_CANDIDATES[codec].map(gpuWorks));
+        return GPU_CANDIDATES[codec].find((_, i) => ok[i]) ?? null;
+      };
+      const [h264, hevc] = await Promise.all([pick('h264'), pick('hevc')]);
+      log(`GPU video encoders: h264=${h264 ?? 'none'} hevc=${hevc ?? 'none'} (checked in ${Date.now() - started} ms)`);
+      return { h264, hevc };
+    })().catch((e) => {
+      log('GPU encoder detection failed', e);
+      return { h264: null, hevc: null };
+    });
+  }
+  return gpuDetection;
+}
+
+/**
+ * The hardware encoder to use for `codec` ("h264_nvenc", "h264_qsv", "h264_amf", or the hevc_ ones),
+ * or null when there is none or Settings turned GPU encoding off. Detection runs once and is cached.
+ */
+export async function gpuEncoder(codec: GpuCodec = 'h264'): Promise<string | null> {
+  if (settings.get().gpuEncode === 'off') return null;
+  return (await detectGpuEncoders())[codec];
+}
+
+/**
+ * Rewrites a constant-quality libx264/libx265 command line (`-c:v libx264 … -crf N`) for the GPU
+ * encoder, or returns null when it doesn't apply: no GPU encoder, GPU encoding off, bitrate-targeted
+ * or two-pass encodes (the CPU encoders spend bits better there), lossless, or encoder-private options.
+ */
+export async function gpuArgsFor(args: string[]): Promise<string[] | null> {
+  const ci = args.findIndex((a, i) => (a === '-c:v' || a === '-vcodec') && /^libx26[45]$/.test(args[i + 1] ?? ''));
+  if (ci < 0) return null;
+  if (args.filter((a) => a === '-c:v' || a === '-vcodec').length !== 1) return null;
+  const crfAt = args.indexOf('-crf');
+  const crf = crfAt >= 0 ? Number(args[crfAt + 1]) : NaN;
+  if (!Number.isFinite(crf) || crf <= 0) return null;
+  if (args.some((a) => /^-(b:v|pass|passlogfile|qp|x264-params|x264opts|x265-params)$/.test(a))) return null;
+  // Throwaway previews at ultrafast/superfast are already cheap on the CPU; a GPU session costs more to open.
+  const presetAt = args.indexOf('-preset');
+  if (presetAt >= 0 && /^(ultrafast|superfast)$/.test(args[presetAt + 1] ?? '')) return null;
+  const encoder = await gpuEncoder(args[ci + 1] === 'libx265' ? 'hevc' : 'h264');
+  if (!encoder) return null;
+  const out: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (i === ci) {
+      out.push('-c:v', encoder, ...gpuQualityArgs(encoder, crf));
+      i++;
+    } else if (a === '-crf' || a === '-preset' || a === '-tune') i++; // x264/x265 vocabulary; replaced above
+    else if (a === '-pix_fmt' && args[i + 1] === 'yuv420p') {
+      out.push(a, gpuPixFmt(encoder));
+      i++;
+    } else out.push(a);
+  }
+  return out;
+}
+
+// Look for a hardware encoder in the background shortly after start-up, so the first video job
+// doesn't wait for it.
+setTimeout(() => {
+  if (settings.get().gpuEncode !== 'off') void detectGpuEncoders();
+}, 20_000).unref?.();
