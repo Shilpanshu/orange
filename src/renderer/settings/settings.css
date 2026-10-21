@@ -74,9 +74,11 @@
 }
 .opt select {
   width: 180px;
+  flex: none;
 }
 .opt .seg {
   width: 240px;
+  flex: none;
 }
 .toggle {
   position: relative;
@@ -207,8 +209,9 @@
 .status-dot.warn {
   background: var(--accent);
 }
-.hotkey-input {
+.opt .hotkey-input {
   width: 200px;
+  flex: none;
   text-align: center;
   cursor: pointer;
 }
