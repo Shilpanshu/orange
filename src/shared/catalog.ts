@@ -155,6 +155,13 @@ export const TOOLS: ToolDef[] = [
   { id: 'organizePdf', label: 'Organize', icon: 'organize', kinds: ['pdf'], single: true, blurb: 'Reorder, rotate, duplicate, remove' },
   { id: 'splitPdf', label: 'Split', icon: 'split', kinds: ['pdf'], single: true, blurb: 'One file per page or range' },
   { id: 'extractArchive', label: 'Extract', icon: 'extract', kinds: ['archive'], multi: 'optional', blurb: 'Unpack next to the archive' },
+  { id: 'unlock', label: 'Unlock', icon: 'unlock', kinds: ['pdf', 'archive'], multi: 'optional', blurb: 'Remove a password you know' },
+  { id: 'ocr', label: 'OCR', icon: 'ocr', kinds: ['image', 'pdf'], multi: 'optional', blurb: 'Make scans searchable, or get the text' },
+  { id: 'removeBg', label: 'Remove BG', icon: 'cutout', kinds: ['image'], multi: 'optional', blurb: 'Cut out the subject' },
+  { id: 'upscale', label: 'Upscale', icon: 'upscale', kinds: ['image'], multi: 'optional', blurb: '2× or 4× sharper and larger' },
+  { id: 'subtitles', label: 'Subtitles', icon: 'captions', kinds: ['video', 'audio'], multi: 'optional', blurb: 'Speech to SRT, offline' },
+  { id: 'protect', label: 'Protect', icon: 'lock', kinds: ['pdf', 'image', 'video', 'audio', 'document', 'slides', 'spreadsheet', 'ebook', 'subtitle', 'archive', 'other', 'folder'], multi: 'optional', blurb: 'Password-protect a PDF or ZIP' },
+  { id: 'rename', label: 'Rename', icon: 'rename', kinds: ['image', 'video', 'audio', 'pdf', 'document', 'slides', 'spreadsheet', 'ebook', 'subtitle', 'archive', 'other', 'folder'], multi: 'optional', blurb: 'Patterns, numbers and dates' },
 ];
 
 export function toolsFor(exts: string[], hasFolder = false): ToolDef[] {

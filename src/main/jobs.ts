@@ -22,9 +22,12 @@ import { tools as imageTools } from './ops/tools-image';
 import { tools as avTools } from './ops/tools-av';
 import { tools as pdfTools } from './ops/tools-pdf';
 import { tools as fileTools } from './ops/tools-file';
+import { tools as aiTools } from './ops/tools-ai';
+import { tools as utilTools } from './ops/tools-util';
+import { tools as speechTools } from './ops/tools-speech';
 
 const CONVERTERS: ConverterModule[] = [imageConv, avConv, docConv, archiveConv, subtitleConv];
-const TOOLS: Record<string, ToolFn> = { ...imageTools, ...avTools, ...pdfTools, ...fileTools };
+const TOOLS: Record<string, ToolFn> = { ...imageTools, ...avTools, ...pdfTools, ...fileTools, ...aiTools, ...utilTools, ...speechTools };
 
 // Tools that run immediately without a window.
 const INSTANT_TOOLS = new Set(['extractArchive']);

@@ -32,6 +32,7 @@
     "typescript": "^7.0.2"
   },
   "dependencies": {
+    "@huggingface/transformers": "^4.3.1",
     "@mediapipe/tasks-vision": "^1.1.1",
     "@tesseract.js-data/eng": "^1.0.0",
     "electron-updater": "^6.8.9",
@@ -50,7 +51,8 @@
     "electron-winstaller@5.4.0": true,
     "esbuild@0.28.2": true,
     "sharp@0.35.5": true,
-    "uiohook-napi@1.5.5": true
+    "uiohook-napi@1.5.5": true,
+    "onnxruntime-node@1.30.0": true
   },
   "build": {
     "appId": "app.orange.converter",

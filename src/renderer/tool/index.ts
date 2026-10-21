@@ -4,10 +4,13 @@ import { pages as imagePages } from './image';
 import { pages as avPages } from './av';
 import { pages as pdfPages } from './pdf';
 import { pages as filePages } from './file';
+import { pages as aiPages } from './ai';
+import { pages as utilPages } from './util';
+import { pages as speechPages } from './speech';
 
 export type ToolPage = (paths: string[]) => void | Promise<void>;
 
-const PAGES: Record<string, ToolPage> = { ...imagePages, ...avPages, ...pdfPages, ...filePages };
+const PAGES: Record<string, ToolPage> = { ...imagePages, ...avPages, ...pdfPages, ...filePages, ...aiPages, ...utilPages, ...speechPages };
 
 const { tool, paths } = args<{ tool: string; paths: string[] }>();
 document.body.dataset.tool = tool;
