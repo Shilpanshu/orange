@@ -85,7 +85,10 @@ const DEFAULTS: Settings = {
 };
 
 class Store extends EventEmitter {
-  private file = join(app.getPath('userData'), 'settings.json');
+  // Resolved on use, not at import: main.ts may switch the profile (ORANGE_USER_DATA) first.
+  private get file() {
+    return join(app.getPath('userData'), 'settings.json');
+  }
   private data: Settings = structuredClone(DEFAULTS);
 
   load() {

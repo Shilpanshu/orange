@@ -13,6 +13,7 @@ import { hud } from './hud';
 import { registerFileIpc } from './ipc-files';
 import { shelf } from './shelf';
 import { officeStatus, installLibreOffice } from './engines/office';
+import { hasPandoc } from './engines/pandoc';
 import { binDir } from './paths';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
@@ -49,9 +50,13 @@ function openWheelFor(w: WheelKind, paths: string[]) {
   wheel.open({ wheel: w, mode: 'click', paths, prefs: wheelPrefs() });
 }
 
-/** Only the installed app owns the Explorer menu, so a dev run never repoints it. */
+/**
+ * Only the installed app owns the Explorer menu, so a dev run never repoints it. Test runs of a
+ * packaged build use a separate profile (ORANGE_USER_DATA / --user-data-dir) and must not either.
+ */
 function syncContextMenu() {
-  if (app.isPackaged) registerContextMenu(settings.get().contextMenu).catch((e) => log('context menu', e));
+  const testProfile = !!process.env.ORANGE_USER_DATA || app.commandLine.hasSwitch('user-data-dir');
+  if (app.isPackaged && !testProfile) registerContextMenu(settings.get().contextMenu).catch((e) => log('context menu', e));
 }
 
 /** What the wheel needs to order and decorate slices: pins, last choices, saved presets. */
@@ -186,7 +191,7 @@ app.whenReady().then(() => {
       bundled: {
         'FFmpeg (video and audio)': has('ffmpeg.exe'),
         'ImageMagick (images)': has('imagemagick/magick.exe'),
-        'Pandoc (documents)': has('pandoc.exe'),
+        'Pandoc (documents)': hasPandoc(), // shipped compressed; unpacked on first use
         'Ghostscript (PDF)': has('gs/bin/gswin64c.exe'),
         '7-Zip (archives)': has('7z.exe'),
       },
