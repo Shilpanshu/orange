@@ -17,12 +17,20 @@
 //
 // @huggingface/transformers and onnxruntime-node are loaded lazily with a runtime require so they stay
 // out of the esbuild bundle and off the app's startup path.
+//
+// The AI engine itself (transformers.js + onnxruntime-node with DirectML, ~65 MB) is not in the installer
+// either: like the models, it downloads once, on the first AI job, from the npm registry (npmmirror as a
+// fallback), pinned to the exact versions and sha512 checksums in package-lock.json (scripts/dist.mjs
+// writes them to dist/ai-runtime.json). It lands in <userData>/ai-runtime/<versions>/node_modules and
+// loads from there, offline, ever after. From source (npm start, npm test) node_modules is used directly.
 import { app, net } from 'electron';
 import { createHash } from 'node:crypto';
-import { createWriteStream, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { closeSync, createWriteStream, existsSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync, writeSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { dirname, join } from 'node:path';
+import { Readable } from 'node:stream';
+import { createGunzip } from 'node:zlib';
 import type * as TF from '@huggingface/transformers';
 import type * as ORT from 'onnxruntime-node';
 import { log } from '../log';
@@ -84,10 +92,21 @@ export function modelsDir(): string {
   return d;
 }
 
-/** transformers.js, configured for Orange (cache folder, quiet logs, cancellable downloads). */
+/**
+ * transformers.js, configured for Orange (cache folder, quiet logs, cancellable downloads).
+ * Before the AI engine is downloaded this returns a stand-in that loads the module on first property
+ * access, so `const T = transformers(); await loadModel(…); new T.Tensor(…)` works on a fresh install:
+ * the loaders download the engine before anything touches T.
+ */
 export function transformers(): typeof TF {
   if (tf) return tf;
-  const mod = nodeRequire('@huggingface/transformers') as typeof TF;
+  if (!aiRuntimeReady()) return new Proxy({} as typeof TF, { get: (_t, key) => (loadTransformers() as any)[key] });
+  return loadTransformers();
+}
+
+function loadTransformers(): typeof TF {
+  if (tf) return tf;
+  const mod = runtimeRequire()('@huggingface/transformers') as typeof TF;
   const env = mod.env;
   env.cacheDir = modelsDir();
   env.useFSCache = true;
@@ -102,9 +121,344 @@ export function transformers(): typeof TF {
   return mod;
 }
 
-/** onnxruntime-node (the same copy transformers.js uses). */
+/** onnxruntime-node (the same copy transformers.js uses). Call after a loader has run (see ensureAiRuntime). */
 export function ort(): typeof ORT {
-  return nodeRequire('onnxruntime-node') as typeof ORT;
+  return runtimeRequire()('onnxruntime-node') as typeof ORT;
+}
+
+// ------------------------------------------------------------------ the AI engine (downloaded on first use)
+
+interface RuntimePackage {
+  name: string;
+  version: string;
+  /** Registry tarball URL. */
+  url: string;
+  /** Subresource-integrity string from package-lock.json, e.g. "sha512-…". */
+  integrity: string;
+}
+
+/** Approximate download, for the note shown before the size is known. */
+const RUNTIME_MB = 116;
+
+let localRuntime: boolean | null = null;
+/** node_modules has the engine (running from source, or a build that still bundles it). */
+function hasLocalRuntime(): boolean {
+  if (localRuntime === null) {
+    try {
+      nodeRequire.resolve('onnxruntime-node');
+      nodeRequire.resolve('@huggingface/transformers');
+      localRuntime = true;
+    } catch {
+      localRuntime = false;
+    }
+  }
+  return localRuntime;
+}
+
+let manifestCache: RuntimePackage[] | null = null;
+function runtimeManifest(): RuntimePackage[] {
+  if (manifestCache) return manifestCache;
+  try {
+    const m = JSON.parse(readFileSync(join(__dirname, 'ai-runtime.json'), 'utf8'));
+    if (!Array.isArray(m?.packages) || !m.packages.length) throw new Error('no packages');
+    manifestCache = m.packages as RuntimePackage[];
+    return manifestCache;
+  } catch (e: any) {
+    throw new Error(`This copy of Orange is missing its AI engine list (dist/ai-runtime.json): ${e?.message ?? e}. Reinstall Orange.`);
+  }
+}
+
+function runtimeRootDir(): string {
+  return join(app.getPath('userData'), 'ai-runtime');
+}
+
+/** Folder for this exact set of versions, e.g. <userData>/ai-runtime/ort1.30.0-tf4.3.1-1a2b3c4d. */
+function runtimeDir(): string {
+  const pk = runtimeManifest();
+  const v = (n: string) => pk.find((p) => p.name === n)?.version ?? '';
+  const hash = createHash('sha256').update(pk.map((p) => `${p.name}@${p.version}#${p.integrity}`).join('\n')).digest('hex').slice(0, 8);
+  return join(runtimeRootDir(), `ort${v('onnxruntime-node')}-tf${v('@huggingface/transformers')}-${hash}`);
+}
+
+const DONE_MARK = '.orange-complete';
+
+/** True when the AI engine can load without a download. */
+export function aiRuntimeReady(): boolean {
+  if (hasLocalRuntime()) return true;
+  try {
+    return existsSync(join(runtimeDir(), DONE_MARK));
+  } catch {
+    return false;
+  }
+}
+
+/** For Settings / first-run notes: is the engine here, and how big is the one-time download. */
+export function aiRuntimeStatus(): { ready: boolean; mb: number } {
+  return { ready: aiRuntimeReady(), mb: RUNTIME_MB };
+}
+
+let runtimeReq: NodeJS.Require | null = null;
+function runtimeRequire(): NodeJS.Require {
+  if (hasLocalRuntime()) return nodeRequire;
+  if (runtimeReq) return runtimeReq;
+  const dir = runtimeDir();
+  if (!existsSync(join(dir, DONE_MARK))) throw new Error("The AI engine isn't downloaded yet.");
+  // transformers.js requires sharp; hand it Orange's own copy (same instance, same settings). Rewritten
+  // on every start because the install folder can move.
+  const shim = join(dir, 'node_modules', 'sharp');
+  mkdirSync(shim, { recursive: true });
+  writeFileSync(join(shim, 'package.json'), JSON.stringify({ name: 'sharp', main: 'index.js' }));
+  writeFileSync(join(shim, 'index.js'), `module.exports = require(${JSON.stringify(nodeRequire.resolve('sharp'))});\n`);
+  runtimeReq = createRequire(join(dir, 'index.js'));
+  return runtimeReq;
+}
+
+/** Which tarball files the engine needs (paths inside the package, "/" separated). */
+function wanted(pkg: string, rel: string): boolean {
+  if (rel === 'package.json' || /^LICEN[CS]E/i.test(rel)) return true;
+  if (/\.(map|d\.ts|d\.mts|md)$/i.test(rel)) return false;
+  switch (pkg) {
+    case 'onnxruntime-node':
+      if (rel.startsWith('dist/')) return rel.endsWith('.js');
+      // The Windows x64 binding, onnxruntime and DirectML. dxcompiler/dxil only serve the WebGPU provider,
+      // which Orange never asks for.
+      return new RegExp(`^bin/napi-v\\d+/win32/${process.arch}/`).test(rel) && !/\/(dxcompiler|dxil)\.dll$/i.test(rel);
+    case '@huggingface/transformers':
+      return rel === 'dist/transformers.node.cjs';
+    default:
+      return rel.startsWith('dist/') || rel.endsWith('.js') || rel.endsWith('.cjs') || rel.endsWith('.json');
+  }
+}
+
+/** Pulls exact byte counts out of a stream of chunks. */
+class ByteReader {
+  private buf: Buffer = Buffer.alloc(0);
+  private done = false;
+  constructor(private it: AsyncIterator<Buffer>) {}
+  private async fill(n: number) {
+    while (this.buf.length < n && !this.done) {
+      const r = await this.it.next();
+      if (r.done) this.done = true;
+      else this.buf = this.buf.length ? Buffer.concat([this.buf, r.value]) : r.value;
+    }
+  }
+  /** Exactly n bytes, or null at the end of the stream. */
+  async take(n: number): Promise<Buffer | null> {
+    await this.fill(n);
+    if (this.buf.length < n) return null;
+    const out = this.buf.subarray(0, n);
+    this.buf = this.buf.subarray(n);
+    return out;
+  }
+  /** Streams n bytes to `sink` (or drops them) without holding them all in memory. */
+  async pass(n: number, sink?: (b: Buffer) => void) {
+    while (n > 0) {
+      if (!this.buf.length) await this.fill(1);
+      if (!this.buf.length) throw new Error('the engine download was cut short');
+      const part = this.buf.subarray(0, Math.min(n, this.buf.length));
+      this.buf = this.buf.subarray(part.length);
+      sink?.(part);
+      n -= part.length;
+    }
+  }
+}
+
+/** Extracts the wanted files of an npm tarball stream (gunzipped tar) into <dest>/node_modules/<pkg>. */
+async function untarPackage(tar: AsyncIterable<Buffer>, pkg: string, dest: string): Promise<number> {
+  const r = new ByteReader(tar[Symbol.asyncIterator]());
+  const root = join(dest, 'node_modules', ...pkg.split('/'));
+  let longName: string | null = null;
+  let files = 0;
+  for (;;) {
+    const h = await r.take(512);
+    if (!h || h.every((b) => b === 0)) break;
+    const str = (a: number, b: number) => h.subarray(a, b).toString('utf8').replace(/\0.*$/s, '');
+    const sizeField = h.subarray(124, 136);
+    const size = sizeField[0] & 0x80 ? Number(sizeField.readBigUInt64BE(4)) : parseInt(str(124, 136).trim() || '0', 8);
+    const type = String.fromCharCode(h[156] || 48);
+    const padded = Math.ceil(size / 512) * 512;
+    let name = str(0, 100);
+    const prefix = h.subarray(257, 262).toString('latin1') === 'ustar' ? str(345, 500) : '';
+    if (prefix) name = `${prefix}/${name}`;
+    if (type === 'x' || type === 'L') {
+      const data = (await r.take(padded))!.subarray(0, size).toString('utf8');
+      longName = type === 'L' ? data.replace(/\0.*$/s, '') : /(?:^|\n)\d+ path=([^\n]*)\n/.exec(data)?.[1] ?? null;
+      continue;
+    }
+    if (longName) (name = longName), (longName = null);
+    // npm tarballs keep everything under one top folder ("package/").
+    const rel = name.replace(/\\/g, '/').split('/').slice(1).join('/');
+    const safe = rel && !rel.split('/').some((s) => s === '..' || s === '') && !/^[a-z]:/i.test(rel);
+    if ((type === '0' || type === '\0' || type === '7') && safe && wanted(pkg, rel)) {
+      const out = join(root, ...rel.split('/'));
+      mkdirSync(dirname(out), { recursive: true });
+      const fd = openSync(out, 'w');
+      try {
+        await r.pass(size, (b) => writeSync(fd, b));
+      } finally {
+        closeSync(fd);
+      }
+      await r.pass(padded - size);
+      files++;
+    } else {
+      await r.pass(padded);
+    }
+  }
+  return files;
+}
+
+function sriCheck(integrity: string): { algo: string; expect: string } {
+  const m = /^(sha512|sha384|sha256)-([A-Za-z0-9+/=]+)$/.exec(integrity.trim().split(/\s+/)[0] ?? '');
+  if (!m) throw new Error(`unsupported integrity "${integrity}"`);
+  return { algo: m[1], expect: m[2] };
+}
+
+/** Streams one package from the registry straight into `dest`, verifying its checksum on the way. */
+async function fetchPackage(p: RuntimePackage, dest: string, signal: AbortSignal | undefined, onBytes: (loaded: number, total: number) => void) {
+  const { algo, expect } = sriCheck(p.integrity);
+  const file = p.url.split('/').pop()!;
+  const urls = [p.url, `https://registry.npmmirror.com/${p.name}/-/${file}`];
+  let lastErr: unknown;
+  for (const url of urls) {
+    if (signal?.aborted) throw cancelled();
+    const target = join(dest, 'node_modules', ...p.name.split('/'));
+    rmSync(target, { recursive: true, force: true });
+    let body: Readable | null = null;
+    try {
+      const res = await net.fetch(url, { signal, cache: 'no-store' } as any);
+      if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+      const total = Number(res.headers.get('content-length') ?? 0);
+      const hash = createHash(algo);
+      let loaded = 0;
+      body = Readable.fromWeb(res.body as any);
+      body.on('data', (c: Buffer) => {
+        hash.update(c);
+        loaded += c.length;
+        onBytes(loaded, total);
+      });
+      const gunzip = body.pipe(createGunzip());
+      body.on('error', (e) => gunzip.destroy(e));
+      const files = await untarPackage(gunzip, p.name, dest);
+      // Drain whatever follows the tar's end blocks so the checksum covers the whole download.
+      for await (const _ of gunzip) void _;
+      if (hash.digest('base64') !== expect) throw new Error('checksum mismatch');
+      if (!files) throw new Error('no files');
+      return;
+    } catch (e: any) {
+      body?.destroy();
+      if (signal?.aborted) throw cancelled();
+      lastErr = e;
+      log(`ai: engine package ${p.name}@${p.version} from ${new URL(url).host} failed`, String(e?.message ?? e));
+    }
+  }
+  const msg = String((lastErr as Error)?.message ?? lastErr);
+  if (/checksum|no files|cut short|unexpected end|incorrect header/i.test(msg)) throw new Error(`The AI engine download was damaged (${msg}). Try again.`);
+  throw new Error(`network: couldn't download the AI engine. Check your internet connection and try again.`);
+}
+
+type RuntimeListener = (fraction: number, note: string) => void;
+let installing: { job: Promise<void>; listeners: Set<RuntimeListener> } | null = null;
+
+async function installRuntime(signal: AbortSignal | undefined, emit: RuntimeListener) {
+  const pk = runtimeManifest();
+  const dir = runtimeDir();
+  const staging = `${dir}.part-${process.pid}`;
+  rmSync(staging, { recursive: true, force: true });
+  mkdirSync(staging, { recursive: true });
+  const started = Date.now();
+  // Biggest first, so the total is known almost at once; the small ones are estimated until fetched.
+  const order = [...pk].sort((a, b) => (b.name === 'onnxruntime-node' ? 1 : 0) - (a.name === 'onnxruntime-node' ? 1 : 0));
+  const SMALL = 3e6;
+  let doneBytes = 0;
+  let totalMb = RUNTIME_MB;
+  try {
+    for (const [i, p] of order.entries()) {
+      const remaining = (order.length - i - 1) * SMALL;
+      let size = 0;
+      await fetchPackage(p, staging, signal, (loaded, total) => {
+        size = Math.max(total, loaded);
+        const all = doneBytes + size + remaining;
+        if (total) totalMb = Math.max(1, Math.round(all / 1e6));
+        const f = Math.min(0.97, (doneBytes + loaded) / Math.max(all, 1));
+        emit(f, downloadNote('the AI engine', totalMb, f));
+      });
+      doneBytes += size;
+    }
+    writeFileSync(join(staging, DONE_MARK), JSON.stringify({ packages: pk.map((p) => `${p.name}@${p.version}`), at: new Date().toISOString() }));
+    rmSync(dir, { recursive: true, force: true });
+    renameSync(staging, dir);
+  } catch (e) {
+    rmSync(staging, { recursive: true, force: true });
+    throw e;
+  }
+  emit(1, 'AI engine ready');
+  log(`ai: engine installed in ${dir} (${statTree(dir) >> 20} MB on disk) in ${Date.now() - started} ms`);
+  // Older engine versions left by an update.
+  for (const f of readdirSync(runtimeRootDir())) {
+    const p = join(runtimeRootDir(), f);
+    if (p !== dir) {
+      try {
+        rmSync(p, { recursive: true, force: true });
+      } catch {
+        /* in use; next time */
+      }
+    }
+  }
+}
+
+function statTree(p: string): number {
+  try {
+    const s = statSync(p);
+    if (!s.isDirectory()) return s.size;
+    return readdirSync(p).reduce((a, f) => a + statTree(join(p, f)), 0);
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Makes sure the AI engine is on disk, downloading it (once, with progress in `span`) when it isn't.
+ * Every loader calls this; call it yourself before using transformers() or ort() outside a loader, e.g.
+ * from a "Download" button. Resolves at once when the engine is already here.
+ */
+export async function ensureAiRuntime(ctx?: AiCtx, span: [number, number] = [0, 1]): Promise<void> {
+  if (aiRuntimeReady()) return;
+  const listener: RuntimeListener = (f, note) => ctx?.progress?.(span[0] + (span[1] - span[0]) * f, note);
+  for (;;) {
+    if (ctx?.signal?.aborted) throw cancelled();
+    if (!installing) {
+      const listeners = new Set<RuntimeListener>();
+      const job = installRuntime(ctx?.signal, (f, n) => listeners.forEach((l) => l(f, n))).finally(() => (installing = null));
+      installing = { job, listeners };
+    }
+    const cur = installing;
+    cur.listeners.add(listener);
+    listener(0, downloadNote('the AI engine', RUNTIME_MB));
+    try {
+      await untilAborted(cur.job, ctx?.signal);
+      runtimeReq = null;
+      return;
+    } catch (e: any) {
+      if (ctx?.signal?.aborted) throw cancelled();
+      // Another job started the download and was cancelled: start it again for this one.
+      if (e?.name === 'AbortError' || e?.message === 'Cancelled') continue;
+      throw e;
+    } finally {
+      cur.listeners.delete(listener);
+    }
+  }
+}
+
+/**
+ * Downloads the engine if needed, inside the first part of `span` (sized against the model's own
+ * download), and returns the part of `span` left for the model.
+ */
+async function withRuntime(ctx: AiCtx | undefined, span: [number, number], modelMb = 0): Promise<[number, number]> {
+  if (aiRuntimeReady()) return span;
+  const share = RUNTIME_MB / (RUNTIME_MB + Math.max(modelMb, 1));
+  const mid = span[0] + (span[1] - span[0]) * share;
+  await ensureAiRuntime(ctx, [span[0], mid]);
+  return [mid, span[1]];
 }
 
 // ------------------------------------------------------------------ registry + status
@@ -469,11 +823,12 @@ function labelFor(repo: string, o: LoadOpts) {
 }
 
 async function tfLoad<T>(kind: 'pipeline' | 'model', repo: string, task: string | null, o: LoadOpts, ctx?: AiCtx): Promise<{ value: T; device: Device }> {
-  const T = transformers();
   const { key, label, mb, def } = labelFor(repo, o);
-  const device = deviceFor(key, o.device ?? 'auto');
   const ready = def ? isReady(def.id) : false;
-  const report = reporter(ctx, o.span ?? [0, 0.3], label, mb);
+  const span = await withRuntime(ctx, o.span ?? [0, 0.3], ready ? 0 : mb);
+  const T = loadTransformers();
+  const device = deviceFor(key, o.device ?? 'auto');
+  const report = reporter(ctx, span, label, mb);
   const files = new Map<string, [number, number]>();
   const progress_callback = (p: any) => {
     if (p?.status !== 'progress' || !p.file) return;
@@ -571,7 +926,8 @@ function sessionOptions(dev: Device): ORT.InferenceSession.SessionOptions {
  * `warm` builds a representative input for the background DirectML trial (device 'auto').
  */
 export async function loadOnnx(id: string, file: string, opts: { device?: DevicePref; warm?: () => Record<string, ORT.Tensor>; span?: [number, number] } = {}, ctx?: AiCtx): Promise<OnnxSession> {
-  await ensureFiles(id, ctx, opts.span);
+  const span = await withRuntime(ctx, opts.span ?? [0, 0.3], isReady(id) ? 0 : modelDef(id).mb);
+  await ensureFiles(id, ctx, span);
   const path = modelFile(id, file);
   const O = ort();
   const pref = opts.device ?? 'auto';

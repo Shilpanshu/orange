@@ -10,6 +10,8 @@ const TITLES: Record<WheelKind, string> = { convert: 'Convert', tools: 'Tools', 
 
 const stage = document.getElementById('stage')!;
 const ring = document.getElementById('ring')!;
+const wedges = document.getElementById('wedges')!;
+const ringTop = document.getElementById('ringTop')!;
 const labels = document.getElementById('labels')!;
 const hubTitle = document.getElementById('hubTitle')!;
 const hubSub = document.getElementById('hubSub')!;
@@ -28,6 +30,8 @@ let hasFolder = false;
 let knownPaths: string[] | undefined;
 let hover = -1; // segment under the pointer
 let picked = -1; // segment chosen with the keyboard
+let shown = -1; // segment currently highlighted
+const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
 let keyNames: Record<WheelKind, string> = { convert: 'Shift', tools: 'Ctrl', actions: 'Alt' };
 
 orange.invoke<Record<WheelKind, string>>('settings:keyNames').then((k) => k && (keyNames = k));
@@ -48,14 +52,49 @@ function segPath(i: number, n: number) {
   return `M${o0.x},${o0.y}A${R_OUT},${R_OUT} 0 ${large} 1 ${o1.x},${o1.y}L${i0.x},${i0.y}A${R_IN},${R_IN} 0 ${large} 0 ${i1.x},${i1.y}Z`;
 }
 
+/** Pixel box around slice i of n (whole pixels, a pixel of slack for anti-aliasing). */
+function segBox(i: number, n: number) {
+  if (n === 1) return { x: C - R_OUT - 1, y: C - R_OUT - 1, w: R_OUT * 2 + 2, h: R_OUT * 2 + 2 };
+  const a0 = (i / n) * Math.PI * 2 - Math.PI / n;
+  const a1 = a0 + (Math.PI * 2) / n;
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  const take = (p: { x: number; y: number }) => {
+    x0 = Math.min(x0, p.x);
+    y0 = Math.min(y0, p.y);
+    x1 = Math.max(x1, p.x);
+    y1 = Math.max(y1, p.y);
+  };
+  for (let k = 0; k <= 24; k++) {
+    const a = a0 + ((a1 - a0) * k) / 24;
+    take(polar(R_OUT, a));
+    take(polar(R_IN, a));
+  }
+  // The outer arc bulges past its sampled points at the compass points it crosses.
+  for (let q = -4; q <= 8; q++) {
+    const a = (q * Math.PI) / 2;
+    if (a > a0 && a < a1) take(polar(R_OUT, a));
+  }
+  const x = Math.floor(x0) - 1, y = Math.floor(y0) - 1;
+  return { x, y, w: Math.ceil(x1) + 1 - x, h: Math.ceil(y1) + 1 - y };
+}
+
 function render(swap = false) {
   items = wheelItems(wheel, exts, hasFolder, prefs);
   const n = items.length;
   recentIdx = items.findIndex((it) => it.recent);
   // Pre-select last time's choice: dropping on the centre repeats it.
   if (picked < 0 && recentIdx >= 0) picked = recentIdx;
-  let svg = `<circle class="base" cx="${C}" cy="${C}" r="${R_OUT}"/>`;
-  items.forEach((_, i) => (svg += `<path class="seg" data-i="${i}" d="${segPath(i, n)}"/>`));
+  // The ring is three stacked pieces so that hovering never repaints the shadowed base disc:
+  // the base (with its drop shadow), one small layer per slice highlight (faded with opacity
+  // alone, on the compositor), and the dividers and hole on top.
+  ring.innerHTML = `<circle class="base" cx="${C}" cy="${C}" r="${R_OUT}"/>`;
+  wedges.innerHTML = items
+    .map((_, i) => {
+      const b = segBox(i, n);
+      return `<svg class="seg" data-i="${i}" viewBox="${b.x} ${b.y} ${b.w} ${b.h}" style="left:${b.x}px;top:${b.y}px;width:${b.w}px;height:${b.h}px"><path d="${segPath(i, n)}"/></svg>`;
+    })
+    .join('');
+  let svg = '';
   if (n > 1) {
     for (let i = 0; i < n; i++) {
       const a = (i / n) * Math.PI * 2 - Math.PI / n;
@@ -64,7 +103,7 @@ function render(swap = false) {
     }
   }
   svg += `<circle class="hole" cx="${C}" cy="${C}" r="${R_IN}"/>`;
-  ring.innerHTML = svg;
+  ringTop.innerHTML = svg;
 
   const dense = n > 8;
   // Past 12 slices one ring of labels no longer fits side by side (the image Tools wheel plus
@@ -88,11 +127,13 @@ function render(swap = false) {
     .map((w) => `<span class="${w === wheel ? 'on' : ''}">${keyNames[w]}</span>`)
     .join('');
   stage.classList.toggle('empty', n === 0);
+  shown = -1;
   setActive(-1);
-  if (swap) {
-    stage.classList.remove('swap');
-    void stage.offsetWidth;
-    stage.classList.add('swap');
+  // Switching wheels while open: the new labels fade up (opacity only, so it stays on the
+  // compositor; no forced reflow to restart a CSS animation). Skipped with reduced motion, which
+  // the stylesheet's rule can't reach for script-driven animations.
+  if (swap && !reducedMotion.matches) {
+    for (const el of [labels, hubTitle]) el.animate([{ opacity: 0.2 }, { opacity: 1 }], { duration: 150, easing: 'ease-out' });
   }
 }
 
@@ -103,8 +144,13 @@ function esc(s: string) {
 function setActive(i: number) {
   hover = i;
   const on = i >= 0 ? i : picked;
-  ring.querySelectorAll('.seg').forEach((el) => el.classList.toggle('on', Number((el as HTMLElement).dataset.i) === on));
-  labels.querySelectorAll('.label').forEach((el) => el.classList.toggle('on', Number((el as HTMLElement).dataset.i) === on));
+  if (on !== shown) {
+    wedges.children[shown]?.classList.remove('on');
+    labels.children[shown]?.classList.remove('on');
+    wedges.children[on]?.classList.add('on');
+    labels.children[on]?.classList.add('on');
+    shown = on;
+  }
   const it = items[on];
   hubTitle.textContent = it ? (it.icon ? it.label : `To ${it.label}`) : TITLES[wheel];
   if (it && i < 0 && on === recentIdx) hubSub.textContent = mode === 'click' ? 'Last used · Enter to repeat' : 'Last used · drop here to repeat';
@@ -113,7 +159,7 @@ function setActive(i: number) {
 
 /** Flash the chosen slice so the drop visibly "lands" before the wheel fades. */
 function flash(i: number) {
-  ring.querySelector(`.seg[data-i="${i}"]`)?.classList.add('chosen');
+  wedges.children[i]?.classList.add('chosen');
   labels.querySelector(`.label[data-i="${i}"]`)?.classList.add('chosen');
   stage.classList.add('landed');
 }
@@ -182,8 +228,9 @@ orange.on(
     } else if (!wasOpen) {
       knownPaths = undefined;
     }
-    stage.style.setProperty('--ox', `${o.cursor.x}px`);
-    stage.style.setProperty('--oy', `${o.cursor.y}px`);
+    // Set on the stage itself rather than through inherited custom properties, which would
+    // restyle every slice and label.
+    stage.style.transformOrigin = `${o.cursor.x}px ${o.cursor.y}px`;
     render(swap);
     show(true);
   },
@@ -321,3 +368,22 @@ window.addEventListener('keydown', (e) => {
 });
 
 render();
+
+// Lay each wheel out once while hidden, so the first real opening doesn't pay for loading fonts
+// and first-time layout (about 25 ms for a 20-slice Tools wheel, a dropped frame on open).
+function warmUp() {
+  if (stage.classList.contains('open')) return;
+  const saved = { wheel, exts, hasFolder, picked };
+  const kinds: [WheelKind, string[]][] = [['tools', ['jpg']], ['actions', ['jpg']], ['convert', ['mp4']]];
+  for (const [w, e] of kinds) {
+    wheel = w;
+    exts = e;
+    hasFolder = false;
+    picked = -1;
+    render();
+    void labels.offsetHeight; // style and layout now, while nobody is watching
+  }
+  ({ wheel, exts, hasFolder, picked } = saved);
+  render();
+}
+requestIdleCallback(warmUp, { timeout: 1500 });

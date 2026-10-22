@@ -3,6 +3,7 @@ import { BrowserWindow, screen, ipcMain, shell } from 'electron';
 import { join, basename } from 'node:path';
 import { page, distDir } from './paths';
 import { settings } from './settings';
+import { releaseWhenHidden } from './windows';
 
 const W = 360;
 
@@ -26,6 +27,8 @@ class Hud {
   private lastSend = 0;
   private pendingSend?: NodeJS.Timeout;
   private height = 80;
+  /** A chime asked for while the page was still loading; played once it has loaded. */
+  private chimePending = false;
 
   private ensure() {
     if (this.win && !this.win.isDestroyed()) return this.win;
@@ -45,13 +48,27 @@ class Hud {
     });
     this.win.setAlwaysOnTop(true, 'pop-up-menu');
     this.win.loadFile(page('hud'));
-    this.win.webContents.once('did-finish-load', () => this.flush(true));
+    this.win.webContents.once('did-finish-load', () => {
+      this.flush(true);
+      if (this.chimePending) this.chime();
+    });
+    // Between jobs the panel is closed rather than kept hidden, freeing its renderer; the next job
+    // opens it again, as the first job after launch does.
+    releaseWhenHidden(this.win);
     return this.win;
+  }
+
+  private chime() {
+    const win = this.win;
+    this.chimePending = !win || win.isDestroyed() || win.webContents.isLoading();
+    if (!this.chimePending) win!.webContents.send('hud:chime');
   }
 
   private place(height: number) {
     this.height = height;
-    const win = this.ensure();
+    // Only the panel itself reports its height; a report arriving after it closed needs no panel.
+    const win = this.win;
+    if (!win || win.isDestroyed()) return;
     const wa = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea;
     const h = Math.min(Math.max(height, 40), 520);
     win.setBounds({ x: wa.x + wa.width - W - 12, y: wa.y + wa.height - h - 12, width: W, height: h });
@@ -65,12 +82,13 @@ class Hud {
       return;
     }
     this.lastSend = now;
-    const win = this.ensure();
     const rows = [...this.rows.values()];
     if (!rows.length) {
-      win.hide();
+      // Nothing to show: hide the panel, without opening one just to hide it.
+      if (this.win && !this.win.isDestroyed()) this.win.hide();
       return;
     }
+    const win = this.ensure();
     if (!win.webContents.isLoading()) win.webContents.send('hud:rows', rows);
     if (!win.isVisible()) win.showInactive();
   }
@@ -113,7 +131,7 @@ class Hud {
         const fn = undo === null ? null : (undo ?? (outputs.length ? () => this.trash(outputs) : null));
         if (fn) this.undos.set(id, fn);
         this.undoKinds.set(id, undo ? 'custom' : 'trash');
-        if (settings.get().sounds && outputs.length) this.win?.webContents.send('hud:chime');
+        if (settings.get().sounds && outputs.length) this.chime();
         this.finish(id, { state: 'done', progress: 1, outputs, errors, note: undefined, undoable: !!fn }, errors.length ? 12000 : 8000);
       },
       failed: (msg: string) => this.finish(id, { state: 'failed', note: msg }, 12000),

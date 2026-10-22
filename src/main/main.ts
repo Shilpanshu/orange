@@ -6,15 +6,14 @@ import { settings, type ModKey } from './settings';
 import { asset } from './paths';
 import type { WheelKind } from '../shared/catalog';
 import { runChoice } from './jobs';
+import { prewarm } from './ops/registry';
 import { openSettings } from './windows';
 import { explorerSelection, startHelper } from './helper';
 import { log } from './log';
 import { hud } from './hud';
 import { registerFileIpc } from './ipc-files';
 import { shelf } from './shelf';
-import { officeStatus, installLibreOffice } from './engines/office';
-import { hasPandoc } from './engines/pandoc';
-import { binDir } from './paths';
+import { binDir, hasBin } from './paths';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { startCrashCapture, reportProblem } from './diagnostics';
@@ -65,6 +64,13 @@ function openWheelFor(w: WheelKind, paths: string[]) {
   }
   watcher.listeningNav = false;
   wheel.open({ wheel: w, mode: 'click', paths, prefs: wheelPrefs() });
+  warmFor(w, paths);
+}
+
+/** Loads the converter or tools the open wheel will need, unless it has closed by then. */
+function warmFor(w: WheelKind, paths: string[]) {
+  const session = wheel.session;
+  prewarm(w, paths, () => wheel.isOpen && wheel.session === session);
 }
 
 /**
@@ -128,6 +134,7 @@ function applyHotkey() {
       if (!paths.length) return;
       watcher.listeningNav = false;
       wheel.open({ wheel: 'convert', mode: 'click', paths, prefs: wheelPrefs() });
+      warmFor('convert', paths);
     });
   } catch (e) {
     log('hotkey register failed', e);
@@ -137,7 +144,7 @@ function applyHotkey() {
 app.whenReady().then(() => {
   settings.load();
   nativeTheme.themeSource = settings.get().theme;
-  app.setLoginItemSettings({ openAtLogin: settings.get().launchAtLogin && app.isPackaged });
+  if (app.isPackaged) app.setLoginItemSettings({ openAtLogin: settings.get().launchAtLogin }); // dev runs share the AppUserModelId: never touch the installed app's entry
 
   wheel.create();
   hud.register();
@@ -163,7 +170,9 @@ app.whenReady().then(() => {
     // A slow answer for an earlier drag must not land on this drag's wheel.
     const session = wheel.session;
     dragSelection.then((paths) => {
-      if (paths.length && wheel.isOpen && wheel.session === session) wheel.setPaths(paths);
+      if (!paths.length || !wheel.isOpen || wheel.session !== session) return;
+      wheel.setPaths(paths);
+      warmFor(w, paths);
     });
   });
   watcher.on('release', () => {
@@ -201,13 +210,16 @@ app.whenReady().then(() => {
   ipcMain.handle('app:checkUpdates', () => checkForUpdates(true));
   ipcMain.handle('app:updateState', () => updateState());
   startUpdater(() => tray?.setContextMenu(trayMenu()));
+  // The engine modules load when Settings asks, not at startup.
   ipcMain.handle('engines:status', async () => {
+    const { officeStatus } = await import('./engines/office');
+    const { hasPandoc } = await import('./engines/pandoc');
     const st = await officeStatus();
     const has = (p: string) => existsSync(join(binDir, p));
     return {
       ...st,
       bundled: {
-        'FFmpeg (video and audio)': has('ffmpeg.exe'),
+        'FFmpeg (video and audio)': hasBin('ffmpeg'), // may ship packed; unpacked on first use
         'ImageMagick (images)': has('imagemagick/magick.exe'),
         'Pandoc (documents)': hasPandoc(), // shipped compressed; unpacked on first use
         'Ghostscript (PDF)': has('gs/bin/gswin64c.exe'),
@@ -215,14 +227,14 @@ app.whenReady().then(() => {
       },
     };
   });
-  ipcMain.handle('engines:installLibreOffice', () => installLibreOffice());
+  ipcMain.handle('engines:installLibreOffice', async () => (await import('./engines/office')).installLibreOffice());
   ipcMain.handle('app:openLogs', () => shell.openPath(app.getPath('logs')));
   ipcMain.handle('settings:get', () => settings.get());
   ipcMain.handle('settings:set', (_e, patch) => {
     settings.set(patch);
     if (patch && 'contextMenu' in patch) syncContextMenu();
     nativeTheme.themeSource = settings.get().theme;
-    app.setLoginItemSettings({ openAtLogin: settings.get().launchAtLogin && app.isPackaged });
+    if (app.isPackaged) app.setLoginItemSettings({ openAtLogin: settings.get().launchAtLogin }); // dev runs share the AppUserModelId: never touch the installed app's entry
     applyHotkey();
     return settings.get();
   });

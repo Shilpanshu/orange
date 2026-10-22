@@ -5,7 +5,7 @@ and working; `--force` or `--force=ffmpeg,7z,magick` re-fetches).
 
 | Tool | Source | Size |
 | --- | --- | --- |
-| `ffmpeg.exe`, `ffprobe.exe` | gyan.dev "release essentials" static build | ~105 MB each |
+| `ffmpeg.exe`, `ffprobe.exe` | gyan.dev "release essentials" static build; the installer ships `ffmpeg.exe.zst` (~30 MB) and `ffprobe.exe.from-ffmpeg.zst` (~23 MB, a zstd patch against ffmpeg.exe), unpacked on first use by `src/main/paths.ts` | ~105 MB each |
 | `7z.exe`, `7z.dll` | 7-Zip x64 installer from SourceForge, unpacked with `7zr.exe` from 7-zip.org | ~2.5 MB |
 | `imagemagick/magick.exe` + config XML | ImageMagick portable Q16 x64 from SourceForge | ~32 MB |
 

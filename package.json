@@ -1,6 +1,6 @@
 {
   "name": "orange",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "description": "Drag a file, tap a key, convert it. A radial file converter for Windows.",
   "main": "dist/main.js",
   "scripts": {
@@ -70,20 +70,24 @@
       "!**/node_modules/**/*.{md,markdown,ts,mts,cts,d.ts,d.mts,flow,tsbuildinfo}",
       "!**/node_modules/**/{test,tests,__tests__,example,examples,.github,.vscode}/**",
       "!node_modules/@napi-rs/**",
+      "!node_modules/@types/**",
+      "!node_modules/undici-types/**",
       "!node_modules/@tesseract.js-data/eng/4.0.0/**",
-      "!node_modules/onnxruntime-web/**",
-      "!node_modules/onnxruntime-node/bin/napi-v*/{darwin,linux}/**",
-      "!node_modules/onnxruntime-node/bin/napi-v*/win32/arm64/**",
-      "!node_modules/onnxruntime-node/script/**",
-      "!node_modules/@huggingface/transformers/{src,types}/**",
-      "!node_modules/@huggingface/transformers/dist/{transformers.js,transformers.min.js,transformers.web.js,transformers.web.min.js,transformers.node.min.cjs,transformers.node.min.mjs,ort-wasm*}",
+      "!node_modules/{@huggingface,onnxruntime-node,onnxruntime-common,onnxruntime-web,protobufjs,@protobufjs,flatbuffers,guid-typescript,long,platform,adm-zip,escape-string-regexp}/**",
       "!node_modules/tesseract.js-core/*.wasm.js",
-      "!node_modules/tesseract.js-core/tesseract-core{,-simd,-relaxedsimd,-lstm}.{js,wasm}",
-      "!node_modules/tesseract.js/dist/**",
-      "!node_modules/pdfjs-dist/{build,web,types,image_decoders}/**",
+      "!node_modules/tesseract.js-core/tesseract-core{,-lstm,-simd-lstm,-relaxedsimd-lstm}.{js,wasm}",
+      "!node_modules/tesseract.js/{dist,docs}/**",
+      "!node_modules/pdfjs-dist/{build,web,types,image_decoders,wasm,standard_fonts}/**",
       "!node_modules/pdfjs-dist/legacy/{web,image_decoders}/**",
-      "!node_modules/pdfjs-dist/legacy/build/{pdf.min.mjs,pdf.worker.min.mjs,pdf.sandbox.min.mjs}",
+      "!node_modules/pdfjs-dist/legacy/build/{pdf.min.mjs,pdf.worker.min.mjs,pdf.sandbox.min.mjs,pdf.sandbox.mjs}",
       "!node_modules/exceljs/dist/**",
+      "!node_modules/es-abstract/{2015,2016,2017,2018,2019,2020,2021,2022,operations}/**",
+      "!node_modules/zlibjs/bin/{*.min.js,*.dev.js,zlib.pretty.js}",
+      "!node_modules/{pako,jszip}/dist/**",
+      "!node_modules/bluebird/js/browser/**",
+      "!node_modules/async/dist/async.{mjs,min.js}",
+      "!node_modules/dayjs/{esm,locale}/**",
+      "!node_modules/pngjs/browser.js",
       "!node_modules/libheif-js/libheif/**",
       "!node_modules/libheif-js/libheif-wasm/{libheif-bundle.mjs,libheif.js,libheif.wasm}",
       "!node_modules/uiohook-napi/{libuiohook,src}/**",
@@ -97,7 +101,6 @@
       "node_modules/sharp/**/*",
       "node_modules/@img/**/*",
       "node_modules/uiohook-napi/**/*",
-      "node_modules/onnxruntime-node/**/*",
       "node_modules/@tesseract.js-data/**/*",
       "node_modules/tesseract.js-core/**/*",
       "node_modules/tesseract.js/**/*"
@@ -108,7 +111,11 @@
         "to": "bin",
         "filter": [
           "**/*",
-          "!pandoc.exe"
+          "!pandoc.exe",
+          "!ffmpeg.exe",
+          "!ffprobe.exe",
+          "!*.part",
+          "!gs/bin/{gs,gswin64}.exe"
         ]
       }
     ],
@@ -149,6 +156,7 @@
       "en-US"
     ],
     "compression": "maximum",
+    "afterPack": "scripts/after-pack.cjs",
     "extraFiles": [
       {
         "from": "vendor/bin/gs/bin",

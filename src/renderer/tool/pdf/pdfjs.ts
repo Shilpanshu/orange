@@ -123,16 +123,28 @@ export async function isProtected(doc: PdfDoc): Promise<boolean> {
 
 const RENDER_TIMEOUT = 15_000;
 
+// pdf.js draws a page on this thread in ~15 ms slices, one per animation frame. With several
+// pages drawing at once (the thumbnail loaders run four), every frame ran four slices: 60 ms
+// frames and stuttering scrolls. Pages therefore take turns at the canvas; fetching and parsing
+// (in the worker) still overlap.
+let canvasTurn: Promise<unknown> = Promise.resolve();
+function takeTurn(): Promise<() => void> {
+  let release!: () => void;
+  const mine = new Promise<void>((r) => (release = r));
+  const ready = canvasTurn.then(() => release);
+  canvasTurn = canvasTurn.then(() => mine);
+  return ready;
+}
+
 /**
  * Renders page `page` (1-based) so its longer side is `longSide` device pixels, with the page's
  * own /Rotate applied. Rejects after a timeout so a pathological page can't hold a slot forever.
  */
 export async function renderPage(doc: PdfDoc, page: number, longSide: number): Promise<HTMLCanvasElement> {
+  const p = await timeout(doc.getPage(page), RENDER_TIMEOUT, () => {});
+  const release = await takeTurn();
   let task: any = null;
-  let timedOut = false;
   const work = (async () => {
-    const p = await doc.getPage(page);
-    if (timedOut) return null as never;
     const base = p.getViewport({ scale: 1 });
     const scale = longSide / Math.max(base.width, base.height, 1);
     const vp = p.getViewport({ scale });
@@ -150,8 +162,9 @@ export async function renderPage(doc: PdfDoc, page: number, longSide: number): P
     }
     return canvas;
   })();
-  return timeout(work, RENDER_TIMEOUT, () => {
-    timedOut = true;
-    task?.cancel?.();
-  });
+  try {
+    return await timeout(work, RENDER_TIMEOUT, () => task?.cancel?.());
+  } finally {
+    release();
+  }
 }

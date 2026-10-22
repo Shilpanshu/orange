@@ -4,7 +4,7 @@ import { app, crashReporter, shell, BrowserWindow, dialog } from 'electron';
 import { readdirSync, readFileSync, statSync, writeFileSync, existsSync } from 'node:fs';
 import { join, basename } from 'node:path';
 import os from 'node:os';
-import JSZip from 'jszip';
+import type JSZip from 'jszip';
 import { log } from './log';
 
 /** Call before app 'ready' so native crashes are captured from the start. */
@@ -41,7 +41,9 @@ function addDir(zip: JSZip, dir: string, into: string, maxFiles = 20) {
 
 /** Builds Orange-report-<date>.zip on the Desktop, reveals it, and offers to open a GitHub issue. */
 export async function reportProblem(extra: Record<string, unknown> = {}) {
-  const zip = new JSZip();
+  // Loaded here, not at startup: only a problem report needs it.
+  const Zip: typeof JSZip = require('jszip');
+  const zip = new Zip();
   const info = {
     app: app.getVersion(),
     electron: process.versions.electron,

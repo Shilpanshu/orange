@@ -6,13 +6,13 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync, existsSync } from 'node:
 import { extname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { page, distDir } from './paths';
+import { releaseWhenHidden } from './windows';
 import { settings } from './settings';
 import { runJob } from './jobs';
 import { hud } from './hud';
 import { log } from './log';
 import type { Ctx } from './ops/types';
-import { converter as imageConv } from './ops/convert-image';
-import { converter as docConv } from './ops/convert-docs';
+import { imageConverter, docsConverter } from './ops/registry';
 
 const W = 344;
 
@@ -199,6 +199,7 @@ function ensureWindow(): BrowserWindow {
   win.loadFile(page('clipboard'));
   win.on('blur', () => hidePopover());
   win.on('closed', () => (win = null));
+  releaseWhenHidden(win);
   return win;
 }
 
@@ -297,7 +298,7 @@ async function saveImage(target: string) {
           writeFileSync(out, png);
           return [out];
         }
-        return imageConv.convert(src, target, c);
+        return imageConverter().convert(src, target, c);
       },
     });
   } finally {
@@ -339,7 +340,7 @@ async function saveText(target: string) {
     await runJob({
       title: `Clipboard text to ${LABEL[target] ?? target.toUpperCase()}`,
       inputs: [src],
-      combined: (ctx) => docConv.convert(src, target, savingCtx(ctx, dir, name)),
+      combined: (ctx) => docsConverter().convert(src, target, savingCtx(ctx, dir, name)),
     });
   } finally {
     rmSync(work, { recursive: true, force: true });

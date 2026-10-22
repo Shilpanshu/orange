@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
 import { makeCtx } from './jobs';
 import { extOf } from '../shared/catalog';
-import { toBrowserImage } from './ops/convert-image';
+import { imageModule } from './ops/registry';
 import { hud } from './hud';
 
 // Formats Chromium can draw directly.
@@ -47,7 +47,7 @@ export function registerFileIpc() {
     if (hit && hit.mtime === mtime) return hit.url;
     if (!previewDir) previewDir = mkdtempSync(join(tmpdir(), 'orange-preview-'));
     const out = join(previewDir, `${previewCache.size}-${Date.now()}.png`);
-    await toBrowserImage(p, out);
+    await imageModule().toBrowserImage(p, out);
     const url = pathToFileURL(out).href;
     previewCache.set(p, { mtime, url });
     return url;

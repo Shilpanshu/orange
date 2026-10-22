@@ -11,7 +11,7 @@ body {
   inset: 0;
   opacity: 0;
   transform: scale(0.94);
-  transform-origin: var(--ox, 50%) var(--oy, 50%);
+  /* transform-origin is set inline to the pointer position on open */
   transition:
     opacity 110ms ease-out,
     transform 140ms cubic-bezier(0.2, 0.8, 0.2, 1);
@@ -21,15 +21,6 @@ body {
   opacity: 1;
   transform: none;
   pointer-events: auto;
-}
-.stage.swap .labels,
-.stage.swap .hub-title {
-  animation: swap 150ms ease-out;
-}
-@keyframes swap {
-  from {
-    opacity: 0.2;
-  }
 }
 
 .ring {
@@ -43,13 +34,25 @@ body {
   stroke-width: 1;
   filter: drop-shadow(0 10px 28px rgba(30, 20, 10, 0.28)) drop-shadow(0 1px 3px rgba(30, 20, 10, 0.25));
 }
-.ring .seg {
-  fill: transparent;
-  transition: fill 70ms linear;
+/* Slice highlights: one small layer per slice, faded with opacity only, so moving across the
+   ring never repaints (the shadowed base disc underneath is expensive to redraw). */
+.wedges {
+  position: absolute;
+  inset: 0;
 }
-.ring .seg.on {
+.wedges .seg {
+  position: absolute;
+  overflow: visible;
+  opacity: 0;
+  transition: opacity 70ms linear;
+  will-change: opacity;
+}
+.wedges .seg path {
   /* --accent-fill keeps the slice label (--accent-ink) at 4.5:1 or better in both themes. */
   fill: var(--accent-fill);
+}
+.wedges .seg.on {
+  opacity: 1;
 }
 .ring .divider {
   stroke: var(--line);
@@ -77,7 +80,6 @@ body {
   justify-content: center;
   text-align: center;
   color: var(--ink);
-  transition: color 70ms linear;
   line-height: 1.1;
 }
 .label .fmt {
@@ -244,9 +246,12 @@ body {
 }
 
 /* The drop lands: the chosen slice brightens, then the wheel fades a beat later. */
-.ring .seg.chosen {
-  fill: var(--accent-fill-hover);
+.wedges .seg.chosen {
+  opacity: 1;
   transition: none;
+}
+.wedges .seg.chosen path {
+  fill: var(--accent-fill-hover);
 }
 .stage.landed:not(.open) {
   transition-delay: 90ms;

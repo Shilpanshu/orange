@@ -22,6 +22,10 @@ body {
   column-gap: 10px;
   align-items: center;
 }
+/* A row that was already showing (its state changed) stays put instead of rising again. */
+.row.seen {
+  animation: none;
+}
 @keyframes rise {
   from {
     opacity: 0;

@@ -6,7 +6,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { basename, dirname, extname, join } from 'node:path';
 import { tmpdir, cpus } from 'node:os';
 import { conversionTargets, extOf, kindOfExt, toolsFor, type Kind } from '../shared/catalog';
-import type { ConverterModule, Ctx, ToolFn } from './ops/types';
+import type { ConverterModule, Ctx } from './ops/types';
 import { UserError } from './ops/types';
 import { settings } from './settings';
 import { hud } from './hud';
@@ -14,21 +14,7 @@ import { openTool } from './windows';
 import { runAction } from './actions';
 import { log } from './log';
 
-import { converter as imageConv } from './ops/convert-image';
-import { converter as avConv } from './ops/convert-av';
-import { converter as docConv } from './ops/convert-docs';
-import { converter as archiveConv } from './ops/convert-archive';
-import { converter as subtitleConv } from './ops/convert-subtitle';
-import { tools as imageTools } from './ops/tools-image';
-import { tools as avTools } from './ops/tools-av';
-import { tools as pdfTools } from './ops/tools-pdf';
-import { tools as fileTools } from './ops/tools-file';
-import { tools as aiTools } from './ops/tools-ai';
-import { tools as utilTools, undoLastRename } from './ops/tools-util';
-import { tools as speechTools } from './ops/tools-speech';
-
-const CONVERTERS: ConverterModule[] = [imageConv, avConv, docConv, archiveConv, subtitleConv];
-const TOOLS: Record<string, ToolFn> = { ...imageTools, ...avTools, ...pdfTools, ...fileTools, ...aiTools, ...utilTools, ...speechTools };
+import { CONVERTERS, archiveConverter, loadTools, undoLastRename } from './ops/registry';
 
 // Tools whose outputs are the user's own files (renamed, or edited in place). Moving those to the
 // Recycle Bin would be destructive, so they get their own undo, or none.
@@ -47,8 +33,8 @@ const INSTANT_TOOLS = new Set(['extractArchive']);
 
 function converterFor(kind: Kind, target: string): ConverterModule | undefined {
   // Zipping works for anything; the archive module owns it.
-  if (['zip', 'tar', 'gz', '7z'].includes(target) && kind !== 'archive') return archiveConv;
-  return CONVERTERS.find((c) => c.kinds.includes(kind));
+  if (['zip', 'tar', 'gz', '7z'].includes(target) && kind !== 'archive') return archiveConverter();
+  return CONVERTERS.find((c) => c.kinds.includes(kind))?.load();
 }
 
 // ------------------------------------------------------------------ output paths
@@ -287,7 +273,7 @@ export async function runChoice(itemId: string, paths: string[]) {
     return runJob({
       title: `Compressing ${paths.length === 1 ? basename(paths[0]) : `${paths.length} items`}`,
       inputs: paths,
-      combined: (ctx) => archiveConv.convert(paths.join('\n'), target, ctx),
+      combined: (ctx) => archiveConverter().convert(paths.join('\n'), target, ctx),
     });
   }
 
@@ -305,7 +291,7 @@ export async function runChoice(itemId: string, paths: string[]) {
 }
 
 export function runTool(id: string, paths: string[], options: any, title?: string): Promise<string[]> {
-  const fn = TOOLS[id];
+  const fn = loadTools()[id];
   if (!fn) {
     hud.notice('This tool is not available yet.');
     return Promise.resolve([]);

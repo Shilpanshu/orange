@@ -24,7 +24,25 @@ It's a Windows take on the drag-and-tap idea of the Mac app Tangerine, built fro
 
 Orange updates itself from GitHub Releases. New versions download in the background and install the next time you quit.
 
-Requires Windows 10 or 11, 64-bit. The installer is about 250 MB and Orange takes about 740 MB on disk. AI models download separately, the first time you use each AI tool.
+Requires Windows 10 or 11, 64-bit. The installer is about 210 MB and Orange takes about 490 MB on disk.
+
+What happens the first time you use some features:
+
+- **Video and audio:** the first job unpacks the video engine once (about a second), offline.
+- **Documents:** the first document conversion unpacks Pandoc once (about a second and a half), offline.
+- **AI tools** (Remove background, Upscale, Subtitles): the AI engine (about 114 MB) and the tool's model download once, then work offline. OCR in English works offline from the start.
+
+## What's new in 1.2.2
+
+Faster, smoother and lighter, with nothing removed:
+
+- **Starts in under 0.2 s** (was about 0.5 s) and uses about 40% less memory sitting in the tray. Converters load only when a job needs them, and the corner panel frees its memory after a minute.
+- **About a third smaller:** 490 MB installed (was 745 MB). The video engine ships compressed and unpacks on first use; the AI engine downloads only if you use an AI tool.
+- **Smoother wheel:** the Tools wheel opens with no dropped frame, and moving across slices repaints far less.
+- **Faster tool windows:** each window loads only its own code (about 60 KB instead of 690 KB).
+- **Smooth PDF grids** at 60 fps in Organize and Split.
+- **Fixed:** OCR failed in the installed 1.2.1 with "Cannot find module tesseract-core-relaxedsimd".
+- **A complete How it works page** in Settings, covering every way to use Orange.
 
 ## What's new in 1.2.1
 

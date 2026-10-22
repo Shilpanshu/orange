@@ -59,21 +59,46 @@ Click to show in folder, double-click to open">${icon('folder', 14)}<span>${esc(
 }
 
 let last = '';
+let sentHeight = 0;
+// The main process sizes and places the window from this; after an in-place note change it is
+// only re-sent when the height actually changed.
+const fitWindow = (onlyIfChanged = false) =>
+  requestAnimationFrame(() => {
+    const hgt = root.scrollHeight + 8;
+    if (!onlyIfChanged || hgt !== sentHeight) orange.send('hud:height', (sentHeight = hgt));
+  });
+const seen = new Set<number>(); // rows already on screen: they don't play the entrance again
 orange.on('hud:rows', (rows: Row[]) => {
-  // Update bars in place when only progress changed, so animations stay smooth.
-  const shape = rows.map((r) => `${r.id}:${r.state}:${r.note}:${r.outputs?.length}`).join('|');
+  // Progress ticks only move bars and change notes: update those in place (no re-render, no
+  // re-measuring the window) so the bars glide and nothing re-animates. A running row's note
+  // ("Page 3 of 12", "Saved 2 of 5") changes on most ticks, so only whether it has one counts.
+  const shape = rows.map((r) => `${r.id}:${r.state}:${r.state === 'running' ? !!r.note : r.note}:${r.outputs?.length}`).join('|');
   if (shape === last) {
+    let noted = false;
     for (const r of rows) {
-      const bar = root.querySelector<HTMLElement>(`.row[data-id="${r.id}"] .bar`);
-      if (!bar) continue;
-      bar.classList.toggle('indeterminate', r.progress <= 0);
-      (bar.firstElementChild as HTMLElement).style.transform = `scaleX(${r.progress <= 0 ? 1 : r.progress})`;
+      const row = root.querySelector<HTMLElement>(`.row[data-id="${r.id}"]`);
+      if (!row) continue;
+      const bar = row.querySelector<HTMLElement>('.bar');
+      if (bar) {
+        bar.classList.toggle('indeterminate', r.progress <= 0);
+        (bar.firstElementChild as HTMLElement).style.transform = `scaleX(${r.progress <= 0 ? 1 : r.progress})`;
+      }
+      const note = row.querySelector<HTMLElement>('.note');
+      if (note && r.state === 'running' && note.textContent !== (r.note ?? '')) {
+        note.textContent = note.title = r.note ?? '';
+        noted = true;
+      }
     }
+    // A longer note can wrap onto another line: re-measure only then.
+    if (noted) fitWindow(true);
     return;
   }
   last = shape;
   root.innerHTML = rows.map(rowHtml).join('');
-  requestAnimationFrame(() => orange.send('hud:height', root.scrollHeight + 8));
+  for (const el of root.children) if (seen.has(Number((el as HTMLElement).dataset.id))) el.classList.add('seen');
+  seen.clear();
+  for (const r of rows) seen.add(r.id);
+  fitWindow();
 });
 
 root.addEventListener('click', (e) => {

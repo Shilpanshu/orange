@@ -11,6 +11,11 @@
 //   Classic certificate:   CSC_LINK (path/base64 of a .pfx) + CSC_KEY_PASSWORD
 //   Neither set:           builds unsigned (SmartScreen will warn on install).
 import { execSync } from 'node:child_process';
+import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const root = fileURLToPath(new URL('..', import.meta.url)).replace(/[\\/]$/, '');
 
 const publish = process.argv.includes('--publish');
 const env = {
@@ -43,7 +48,33 @@ if (publish && !env.GH_TOKEN) {
   process.exit(1);
 }
 
+// The installer ships ffmpeg/ffprobe compressed (scripts/vendor/media.mjs makes the archives).
+const bin = join(root, 'vendor', 'bin');
+for (const f of ['ffmpeg.exe.zst', 'ffprobe.exe.from-ffmpeg.zst', 'pandoc.exe.zst']) {
+  if (!existsSync(join(bin, f))) {
+    console.error(`vendor/bin/${f} is missing. Run "npm run vendor" first.`);
+    process.exit(1);
+  }
+}
+
 const run = (cmd) => execSync(cmd, { stdio: 'inherit', env });
-run('node scripts/build-helper.mjs');
+// The helper only needs rebuilding when its source changed (and a running copy would lock the exe).
+const helperExe = join(bin, 'orange-helper.exe');
+const helperSrc = join(root, 'src', 'helper', 'OrangeHelper.cs');
+if (!existsSync(helperExe) || statSync(helperExe).mtimeMs < statSync(helperSrc).mtimeMs) run('node scripts/build-helper.mjs');
+else console.log('orange-helper.exe is up to date');
 run('node scripts/build.mjs');
+
+// The AI engine (transformers.js + onnxruntime-node) is left out of the installer and downloaded on the
+// first AI job (src/main/engines/ai.ts). Pin exactly what package-lock.json resolved, checksums included.
+const lock = JSON.parse(readFileSync(join(root, 'package-lock.json'), 'utf8'));
+const AI_RUNTIME = ['onnxruntime-node', 'onnxruntime-common', '@huggingface/transformers'];
+const packages = AI_RUNTIME.map((name) => {
+  const e = lock.packages?.[`node_modules/${name}`];
+  if (!e?.version || !e.resolved || !e.integrity) throw new Error(`package-lock.json has no resolved/integrity for ${name}`);
+  return { name, version: e.version, url: e.resolved, integrity: e.integrity };
+});
+writeFileSync(join(root, 'dist', 'ai-runtime.json'), JSON.stringify({ packages }, null, 1));
+console.log(`AI engine pinned: ${packages.map((p) => `${p.name}@${p.version}`).join(', ')}`);
+
 run(`npx electron-builder ${args.join(' ')}`);

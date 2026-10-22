@@ -14,7 +14,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { basename, dirname, extname, join, toNamespacedPath } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import JSZip from 'jszip';
-import ExcelJS from 'exceljs';
+import type * as ExcelJS from 'exceljs';
 import { extOf, kindOfExt } from '../../shared/catalog';
 import type { ConverterModule, Ctx } from './types';
 import { UserError } from './types';
@@ -25,6 +25,9 @@ import { hasPandoc, pandocConvert, pandocReader, pandocWriter, READING_CSS } fro
 import { log } from '../log';
 
 // ------------------------------------------------------------------ helpers
+
+/** exceljs takes ~200 ms to load, so only spreadsheet work loads it (see also registry.prewarm). */
+const excel = (): typeof ExcelJS => require('exceljs');
 
 const norm = (ext: string) => ({ markdown: 'md', htm: 'html' })[ext] ?? ext;
 
@@ -773,7 +776,7 @@ function parseNumberish(s: string): { v: number; fmt?: string } | null {
 async function pdfToXlsx(input: string, ctx: Ctx): Promise<string[]> {
   const doc = await readPdfText(input, ctx, span(ctx, 0.05, 0.6));
   if (!doc.pages.some((p) => p.items.some((i) => i.str.trim()))) throw noTextError();
-  const wb = new ExcelJS.Workbook();
+  const wb = new (excel().Workbook)();
   wb.creator = 'Orange';
   doc.pages.forEach((page, i) => {
     const rows = pageToRows(page);
@@ -1040,7 +1043,7 @@ function safeSheetName(s: string, used: Set<string>) {
 }
 
 function rowsToWorkbook(sheets: { name: string; rows: string[][] }[]): ExcelJS.Workbook {
-  const wb = new ExcelJS.Workbook();
+  const wb = new (excel().Workbook)();
   wb.creator = 'Orange';
   const used = new Set<string>();
   for (const s of sheets) {
@@ -1096,7 +1099,7 @@ function workbookRows(wb: ExcelJS.Workbook): { name: string; rows: string[][] }[
 }
 
 async function loadXlsx(file: string): Promise<ExcelJS.Workbook> {
-  const wb = new ExcelJS.Workbook();
+  const wb = new (excel().Workbook)();
   try {
     await wb.xlsx.readFile(file);
   } catch (e: any) {

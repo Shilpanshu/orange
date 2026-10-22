@@ -20,6 +20,7 @@ import { tools as aiTools } from '../src/main/ops/tools-ai';
 import { tools as utilTools, undoLastRename } from '../src/main/ops/tools-util';
 import { tools as speechTools } from '../src/main/ops/tools-speech';
 import type { OfficeStatus } from '../src/main/engines/office';
+import { CONVERTERS as REGISTRY_CONVERTERS, loadTools } from '../src/main/ops/registry';
 import { need } from './fixtures';
 import * as v from './verify';
 import { check, CheckError } from './verify';
@@ -287,6 +288,21 @@ export function conversionCases(office: OfficeStatus): Case[] {
 export function toolCases(opts: { ai: boolean }): Case[] {
   const c: Case[] = [];
   const add = (group: Case['group'], name: string, run: Case['run'], timeoutMs?: number) => c.push({ group, name, run, timeoutMs });
+
+  // ---------------------------------------------------------------- registry
+  // jobs.ts loads converters and tools lazily through ops/registry; it must route exactly like the
+  // modules themselves.
+  add('instant', 'lazy registry matches the modules', async () => {
+    for (const conv of CONVERTERS) {
+      const entries = REGISTRY_CONVERTERS.filter((e) => e.load() === conv);
+      check(entries.length === 1, `converter for ${conv.kinds.join('/')} is listed ${entries.length} times`);
+      check(entries[0].kinds.join() === conv.kinds.join(), `registry kinds ${entries[0].kinds.join()} != module kinds ${conv.kinds.join()}`);
+    }
+    check(REGISTRY_CONVERTERS.length === CONVERTERS.length, 'registry lists a converter the modules do not');
+    const lazy = loadTools();
+    check(Object.keys(lazy).sort().join() === Object.keys(TOOLS).sort().join(), 'registry tools differ from the modules');
+    for (const id of Object.keys(TOOLS)) check(lazy[id] === TOOLS[id], `tool ${id} differs`);
+  });
 
   // ---------------------------------------------------------------- instant
   add('instant', 'extractArchive zip', async (t) => {

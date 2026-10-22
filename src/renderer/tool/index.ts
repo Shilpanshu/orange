@@ -1,31 +1,19 @@
 // Tool window router: renderer/tool/index.html#{"tool":"cropImage","paths":[...]}
-import { args, h, shell } from '../shared/ui';
-import { pages as imagePages } from './image';
-import { pages as avPages } from './av';
-import { pages as pdfPages } from './pdf';
-import { pages as filePages } from './file';
-import { pages as aiPages } from './ai';
-import { pages as utilPages } from './util';
-import { pages as speechPages } from './speech';
+// Each tool page is its own entry (see pages.ts), added here as a module script so the window
+// only loads the code of the tool it shows. A script added before the document has loaded holds
+// back the load event, so the window isn't shown before its page has been built.
+import { args } from '../shared/ui';
+import { showError } from './start';
+import { PAGES } from './pages';
 
-export type ToolPage = (paths: string[]) => void | Promise<void>;
-
-const PAGES: Record<string, ToolPage> = { ...imagePages, ...avPages, ...pdfPages, ...filePages, ...aiPages, ...utilPages, ...speechPages };
-
-const { tool, paths } = args<{ tool: string; paths: string[] }>();
+const { tool } = args<{ tool: string }>();
 document.body.dataset.tool = tool;
-const pageFn = PAGES[tool];
-if (!pageFn) {
-  const s = shell({ title: 'Orange', layout: 'full' });
-  s.full.append(h('p', { class: 'empty-state' }, `The "${tool}" tool isn't available in this version of Orange.`));
-  s.primary.remove();
-  s.cancel.textContent = 'Close';
+if (Object.hasOwn(PAGES, tool)) {
+  const script = document.createElement('script');
+  script.type = 'module';
+  script.src = `pages/${tool}.js`;
+  script.onerror = () => showError('Something went wrong', `The "${tool}" tool couldn't be loaded.`);
+  document.head.append(script);
 } else {
-  Promise.resolve(pageFn(paths)).catch((e) => {
-    console.error(e);
-    const s = shell({ title: 'Something went wrong', layout: 'full' });
-    s.full.append(h('p', { class: 'empty-state' }, String(e?.message ?? e)));
-    s.primary.remove();
-    s.cancel.textContent = 'Close';
-  });
+  showError('Orange', `The "${tool}" tool isn't available in this version of Orange.`);
 }

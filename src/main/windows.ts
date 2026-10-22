@@ -4,6 +4,7 @@ import { BrowserWindow, nativeTheme, screen, ipcMain, dialog } from 'electron';
 import { join } from 'node:path';
 import { page, distDir, asset } from './paths';
 import { TOOLS } from '../shared/catalog';
+import { loadTools } from './ops/registry';
 
 const open = new Map<string, BrowserWindow>();
 
@@ -41,6 +42,8 @@ function hashArgs(args: object) {
 }
 
 export function openTool(toolId: string, paths: string[]) {
+  // The tool modules load on first use and register the IPC handlers this window calls as it loads.
+  loadTools();
   const [w, h] = SIZES[toolId] ?? DEFAULT_SIZE;
   const wa = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea;
   const win = new BrowserWindow({
@@ -79,6 +82,24 @@ export function openSettings(tab?: string) {
   win.on('closed', () => open.delete('settings'));
   return win;
 }
+
+/**
+ * Destroys a helper window (progress panel, clipboard popover) once it has stayed hidden for a
+ * while, freeing its renderer process (~30 MB). Its owner recreates it on next use, as it does the
+ * first time after launch. The wheel is not released: it has to open instantly.
+ */
+export function releaseWhenHidden(win: BrowserWindow, afterMs = RELEASE_HIDDEN_MS) {
+  let timer: NodeJS.Timeout | undefined;
+  win.on('show', () => clearTimeout(timer));
+  win.on('hide', () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      if (!win.isDestroyed() && !win.isVisible()) win.destroy();
+    }, afterMs);
+  });
+  win.on('closed', () => clearTimeout(timer));
+}
+const RELEASE_HIDDEN_MS = 60_000;
 
 // Shared dialogs the renderer pages can call.
 ipcMain.handle('dialog:folder', async (e, title?: string) => {

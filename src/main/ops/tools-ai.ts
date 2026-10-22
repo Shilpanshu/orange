@@ -24,6 +24,7 @@ import {
   type AiCtx,
   type Device,
   ensureFiles,
+  ensureAiRuntime,
   estimateMs,
   floatTensor,
   isReady,
@@ -1172,7 +1173,11 @@ ipcMain.handle('ai:download', async (e, ids: string[]) => {
   try {
     for (const id of ids) {
       if (id === 'rmbg') await rmbgModel(ctx, [0, 1]);
-      else if (id.startsWith('upscale-')) await ensureFiles(id, ctx, [0, 1]);
+      // Upscale runs on onnxruntime directly: fetch the AI engine too, not just the model.
+      else if (id.startsWith('upscale-')) {
+        await ensureAiRuntime(ctx, [0, 0.9]);
+        await ensureFiles(id, ctx, [0.9, 1]);
+      }
       else if (id.startsWith('ocr-')) await langPathFor([id.slice(4)], ctx);
     }
     return true;

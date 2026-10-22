@@ -294,3 +294,19 @@
     width: 110px;
   }
 }
+
+/* How it works: short titled lists under the hero. */
+.howto {
+  margin: 0 0 18px;
+  max-width: 560px;
+}
+.howto h3 {
+  font: 600 13px var(--font);
+  margin: 0 0 6px;
+}
+.howto ul {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--ink-2);
+  line-height: 1.55;
+}

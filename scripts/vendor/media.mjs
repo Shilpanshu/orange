@@ -3,16 +3,24 @@
 //   7z.exe + 7z.dll               full 7-Zip (RAR extraction included), unpacked from the official x64 installer
 //   imagemagick/magick.exe        ImageMagick portable Q16 x64 (HEIC/JXL/SVG/ICO read, BMP/ICO write)
 //
+// What the installer ships for ffmpeg/ffprobe (see packFfmpeg below and src/main/paths.ts):
+//   ffmpeg.exe.zst                ffmpeg.exe, zstd -19 with a 128 MB window (105 MB -> ~30 MB)
+//   ffprobe.exe.from-ffmpeg.zst   ffprobe.exe as a zstd patch against ffmpeg.exe (105 MB -> ~23 MB): both are
+//                                 static builds of the same libraries, so most of ffprobe is already in ffmpeg.
+// Orange unpacks them once on the first audio/video job (about half a second, offline). The raw exes stay in
+// vendor/bin for `npm start` and `npm test`.
+//
 // Usage: node scripts/vendor/media.mjs [--force] [--force=ffmpeg,7z,magick]
 // Idempotent: a tool that is already present and passes its self-check is skipped.
 // Mirrors: github.com release assets are not used (they time out on some networks); SourceForge and the
 // vendors' own sites are.
 import { execFileSync } from 'node:child_process';
-import { createWriteStream, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, copyFileSync } from 'node:fs';
+import { createWriteStream, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, copyFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, basename } from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
+import { constants as zc, zstdCompressSync, zstdDecompressSync } from 'node:zlib';
 
 const root = new URL('../..', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1');
 const binDir = join(root, 'vendor', 'bin');
@@ -231,6 +239,47 @@ async function ensureFfmpeg() {
   done.push(`ffmpeg ${ver || '(release)'} essentials → vendor/bin/ffmpeg.exe + ffprobe.exe`);
 }
 
+// Window large enough to hold ffmpeg.exe (the patch's reference) plus ffprobe.exe: 2^28 = 256 MB.
+// src/main/paths.ts decodes with the same ZSTD_d_windowLogMax, so keep the two in step.
+const ZSTD_WINDOW_LOG = 28;
+
+function zstdPack(buf, dictionary) {
+  return zstdCompressSync(buf, {
+    ...(dictionary ? { dictionary } : {}),
+    params: {
+      [zc.ZSTD_c_compressionLevel]: 19,
+      [zc.ZSTD_c_windowLog]: dictionary ? ZSTD_WINDOW_LOG : 27,
+      [zc.ZSTD_c_enableLongDistanceMatching]: 1,
+      [zc.ZSTD_c_checksumFlag]: 1,
+    },
+  });
+}
+
+/** The compressed copies the installer ships (see the header). Rebuilt whenever an exe is newer. */
+function packFfmpeg() {
+  const ff = join(binDir, 'ffmpeg.exe');
+  const fp = join(binDir, 'ffprobe.exe');
+  const jobs = [
+    { src: ff, dest: `${ff}.zst`, dict: null },
+    { src: fp, dest: join(binDir, 'ffprobe.exe.from-ffmpeg.zst'), dict: ff },
+  ];
+  const stale = (j) => !existsSync(j.dest) || statSync(j.dest).mtimeMs < Math.max(statSync(j.src).mtimeMs, j.dict ? statSync(j.dict).mtimeMs : 0);
+  if (!jobs.some(stale)) return console.log('✓ ffmpeg/ffprobe archives up to date');
+  const ffBuf = readFileSync(ff);
+  for (const j of jobs) {
+    process.stdout.write(`• compressing ${basename(j.src)} for the installer (zstd -19${j.dict ? ', patch against ffmpeg.exe' : ''}, about a minute)… `);
+    const body = j.src === ff ? ffBuf : readFileSync(j.src);
+    const dictionary = j.dict ? ffBuf : undefined;
+    const z = zstdPack(body, dictionary);
+    const back = zstdDecompressSync(z, { ...(dictionary ? { dictionary } : {}), params: { [zc.ZSTD_d_windowLogMax]: ZSTD_WINDOW_LOG } });
+    if (!back.equals(body)) throw new Error(`${basename(j.dest)} does not round-trip`);
+    writeFileSync(j.dest + '.part', z);
+    renameSync(j.dest + '.part', j.dest);
+    console.log(mb(z.length));
+  }
+  done.push('ffmpeg.exe.zst + ffprobe.exe.from-ffmpeg.zst (what the installer ships)');
+}
+
 // ----------------------------------------------------------------------------- ImageMagick
 
 const magick = join(magickDir, 'magick.exe');
@@ -283,6 +332,7 @@ try {
   mkdirSync(binDir, { recursive: true });
   await ensure7z();
   await ensureFfmpeg();
+  packFfmpeg();
   await ensureMagick();
   console.log(done.length ? `\nInstalled:\n  ${done.join('\n  ')}` : '\nAll media tools present.');
 } catch (e) {

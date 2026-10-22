@@ -60,6 +60,14 @@ function select<T extends string>(value: T, options: [T, string][], onChange: (v
 
 // ------------------------------------------------------------------ pages
 
+/** "Control+Shift+Space" → "Ctrl + Shift + Space". */
+const accel = (a: string) => a.replace('Control', 'Ctrl').replace(/\+/g, ' + ');
+
+/** A short titled list for the How it works page. */
+function howto(title: string, items: string[]) {
+  return h('section', { class: 'howto' }, h('h3', {}, title), h('ul', {}, ...items.map((t) => h('li', {}, t))));
+}
+
 function welcome() {
   const demo = h('div', {
     class: 'demo',
@@ -116,10 +124,42 @@ function welcome() {
         h('tr', {}, h('td', {}, h('span', { class: 'keycap' }, name(k.convert))), h('td', {}, 'Convert to another format')),
         h('tr', {}, h('td', {}, h('span', { class: 'keycap' }, name(k.tools))), h('td', {}, 'Tools: compress, crop, trim, merge, redact and more')),
         h('tr', {}, h('td', {}, h('span', { class: 'keycap' }, name(k.actions))), h('td', {}, 'Actions: share, float, copy, move, copy path, terminal')),
-        h('tr', {}, h('td', {}, h('span', { class: 'keycap' }, s.selectionHotkey.replace(/\+/g, ' + ').replace('Control', 'Ctrl'))), h('td', {}, 'Open the wheel for the files selected in Explorer')),
+        s.selectionHotkey
+          ? h('tr', {}, h('td', {}, h('span', { class: 'keycap' }, accel(s.selectionHotkey))), h('td', {}, 'Open the wheel for the files selected in Explorer'))
+          : null,
+        s.clipboardHotkey
+          ? h('tr', {}, h('td', {}, h('span', { class: 'keycap' }, accel(s.clipboardHotkey))), h('td', {}, 'Convert what you copied: an image, text or files'))
+          : null,
       ),
     ),
-    h('p', { class: 'muted' }, 'While the wheel is open you can tap another key to switch wheels, use the arrow keys to pick a slice, and press Esc to cancel.'),
+    howto('While the wheel is open', [
+      'Tap another key to switch wheels.',
+      'Use the arrow keys to pick a slice, then drop on the centre.',
+      'Press Esc to cancel. The file stays where it was.',
+    ]),
+    howto('Other ways in', [
+      'Right-click files in Explorer and choose Orange. On Windows 11 it is under Show more options.',
+      'Select files in Explorer and press the Explorer-selection shortcut, then click a slice.',
+      'Copy an image or some text and press the clipboard shortcut.',
+      'Settings → Automation can watch a folder and convert new files on its own.',
+    ]),
+    howto('Make the wheel yours', [
+      'In a wheel opened with the Explorer-selection shortcut, right-click a slice to pin it. Pinned slices come first.',
+      'The slice you used last has a dot and is already chosen: drop on the centre to repeat it.',
+      'In tools like Compress or Crop, choose Save as preset… to add your settings to the Tools wheel.',
+    ]),
+    howto('After a job', [
+      'Progress shows in the corner, where you can cancel.',
+      'When it finishes, click a file name to show it in its folder.',
+      'Undo moves the new files to the Recycle Bin, puts moved files back, or restores renamed names.',
+      'Originals are never changed or overwritten.',
+    ]),
+    howto('Good to know', [
+      'Everything runs on this PC and works offline.',
+      'The first video or audio job takes about a second longer while the video engine unpacks, once.',
+      'The AI tools (Remove background, Upscale, Subtitles) download their engine and model the first time you use them, then work offline.',
+      'If something goes wrong, use Report a problem… in the tray menu.',
+    ]),
     s.onboarded
       ? null
       : h(
