@@ -48,7 +48,8 @@ body {
   transition: fill 70ms linear;
 }
 .ring .seg.on {
-  fill: var(--accent);
+  /* --accent-fill keeps the slice label (--accent-ink) at 4.5:1 or better in both themes. */
+  fill: var(--accent-fill);
 }
 .ring .divider {
   stroke: var(--line);
@@ -150,7 +151,7 @@ body {
 }
 .hub-keys span.on {
   border-color: var(--accent);
-  color: var(--accent);
+  color: var(--accent-strong);
 }
 .empty .hub-sub {
   color: var(--ink-3);
@@ -215,7 +216,7 @@ body {
 
 /* The drop lands: the chosen slice brightens, then the wheel fades a beat later. */
 .ring .seg.chosen {
-  fill: var(--accent-strong);
+  fill: var(--accent-fill-hover);
   transition: none;
 }
 .stage.landed:not(.open) {

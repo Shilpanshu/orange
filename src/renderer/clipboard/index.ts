@@ -91,7 +91,7 @@ function render(c: ClipContent) {
       .join('')}</div>`
         : ''
     }
-    <footer><span>${where}</span><span class="keys"><kbd>Enter</kbd> pick <kbd>Esc</kbd> close</span></footer>`;
+    <footer><span title="${esc(c.saveTo)}">${where}</span><span class="keys"><kbd>Enter</kbd> pick <kbd>Esc</kbd> close</span></footer>`;
   buttons = [...root.querySelectorAll<HTMLButtonElement>('.choice')];
   buttons.forEach((b) => b.addEventListener('click', () => pick(b.dataset.id!)));
   buttons.forEach((b) => b.addEventListener('focus', () => buttons.forEach((x) => x.setAttribute('aria-selected', String(x === b)))));

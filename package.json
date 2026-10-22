@@ -1,6 +1,6 @@
 {
   "name": "orange",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Drag a file, tap a key, convert it. A radial file converter for Windows.",
   "main": "dist/main.js",
   "scripts": {

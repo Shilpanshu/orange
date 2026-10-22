@@ -363,7 +363,7 @@ export async function cropImage(paths: string[]) {
   const strip = h('div', { class: 'ix-crop-strip' });
   if (multi) {
     paths.forEach((p, i) => {
-      const b = h('button', { title: base(p), 'aria-label': base(p), onclick: () => show(i) });
+      const b = h('button', { class: 'skeleton', title: base(p), 'aria-label': base(p), onclick: () => show(i) });
       strip.append(b);
       preview(i).then(async (pv) => {
         const c = new OffscreenCanvas(104, 104);
@@ -372,6 +372,7 @@ export async function cropImage(paths: string[]) {
         x.drawImage(pv.bmp, (104 - pv.bmp.width * k) / 2, (104 - pv.bmp.height * k) / 2, pv.bmp.width * k, pv.bmp.height * k);
         const blob = await c.convertToBlob();
         b.style.backgroundImage = `url(${URL.createObjectURL(blob)})`;
+        b.classList.remove('skeleton');
       });
     });
   }

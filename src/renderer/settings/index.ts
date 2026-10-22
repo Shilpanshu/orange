@@ -9,6 +9,7 @@ interface Settings {
   keys: { convert: ModKey; tools: ModKey; actions: ModKey };
   selectionHotkey: string;
   clipboardHotkey: string;
+  gpuEncode: 'auto' | 'off';
   output: { mode: 'beside' | 'folder'; folder: string };
   revealWhenDone: boolean;
   jpgQuality: number;
@@ -74,9 +75,9 @@ function welcome() {
       </style>
       <g class="w">
         <circle cx="110" cy="110" r="96" fill="var(--surface)" stroke="var(--line-strong)"/>
-        <path d="M110 14A96 96 0 0 1 178 42L136 84A36 36 0 0 0 110 74Z" fill="var(--accent)"/>
+        <path d="M110 14A96 96 0 0 1 178 42L136 84A36 36 0 0 0 110 74Z" fill="var(--accent-fill)"/>
         <circle cx="110" cy="110" r="36" fill="var(--surface-2)" stroke="var(--line)"/>
-        <text x="142" y="56" font-size="12" font-weight="700" fill="#fff" text-anchor="middle">PNG</text>
+        <text x="142" y="56" font-size="12" font-weight="700" fill="var(--accent-ink)" text-anchor="middle">PNG</text>
         <text x="178" y="118" font-size="11" font-weight="600" fill="var(--ink)" text-anchor="middle">WEBP</text>
         <text x="142" y="178" font-size="11" font-weight="600" fill="var(--ink)" text-anchor="middle">PDF</text>
         <text x="78" y="178" font-size="11" font-weight="600" fill="var(--ink)" text-anchor="middle">HEIC</text>
@@ -88,7 +89,7 @@ function welcome() {
     </svg>`,
   });
   const k = s.keys;
-  const name = (m: ModKey) => ({ shift: 'Shift', ctrl: 'Ctrl', alt: 'Alt', none: '—' })[m];
+  const name = (m: ModKey) => ({ shift: 'Shift', ctrl: 'Ctrl', alt: 'Alt', none: 'Off' })[m];
   return h(
     'div',
     {},
@@ -146,6 +147,11 @@ function general() {
       { class: 'group' },
       opt('Start with Windows', 'Keep the wheel one keystroke away.', toggle(s.launchAtLogin, (v) => save({ launchAtLogin: v }))),
       opt('Sounds', 'Play the system sound when a job finishes.', toggle(s.sounds, (v) => save({ sounds: v }))),
+      opt(
+        'Use the graphics card for video',
+        'Usually 2–3× faster at the same visual quality. Turn off for the smallest files.',
+        toggle(s.gpuEncode !== 'off', (v) => save({ gpuEncode: v ? 'auto' : 'off' })),
+      ),
       opt(
         'Appearance',
         null,
@@ -261,7 +267,8 @@ function keys() {
 }
 
 function output() {
-  const folderLabel = h('span', {}, s.output.folder || 'No folder chosen');
+  // Long paths are cut at the start (direction: rtl) so the folder's own name stays visible.
+  const folderLabel = h('span', { class: 'folder-path', title: s.output.folder || '' }, h('bdi', {}, s.output.folder || 'No folder chosen'));
   const pick = h(
     'button',
     {
@@ -299,7 +306,7 @@ function output() {
           },
         ),
       ),
-      s.output.mode === 'folder' ? opt('Folder', null, h('div', { class: 'row' }, folderLabel, pick)) : null,
+      s.output.mode === 'folder' ? opt('Folder', null, h('div', { class: 'row folder-row' }, folderLabel, pick)) : null,
       opt('Show in Explorer when done', 'Open the folder and select the new file.', toggle(s.revealWhenDone, (v) => save({ revealWhenDone: v }))),
     ),
     h(
@@ -341,7 +348,9 @@ async function engines() {
         } catch (e: any) {
           b.disabled = false;
           b.textContent = 'Retry';
-          alert(e?.message ?? String(e));
+          // Shown inline next to the button, like every other message in Orange.
+          lo.querySelector('.install-error')?.remove();
+          lo.append(h('span', { class: 'install-error', role: 'alert', style: { color: 'var(--danger)', fontSize: '12px' } }, String(e?.message ?? e)));
         }
       };
       lo.append(b);

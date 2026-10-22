@@ -178,7 +178,7 @@ input.invalid {
   min-width: 0;
 }
 .pf-rot {
-  color: var(--accent);
+  color: var(--accent-strong);
 }
 .pf-drop {
   position: absolute;
@@ -612,7 +612,7 @@ input.invalid {
 }
 .btn.icon.on {
   background: var(--accent-soft);
-  color: var(--accent);
+  color: var(--accent-strong);
   border-color: transparent;
 }
 .ix-badge {
@@ -745,6 +745,10 @@ input.invalid {
 .ix-crop-strip button.on {
   border-color: var(--accent);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent);
+}
+.ix-crop-strip button.skeleton {
+  background: linear-gradient(90deg, var(--surface-2), var(--surface-3), var(--surface-2));
+  background-size: 200% 100%;
 }
 
 /* redact layers */
@@ -1372,7 +1376,7 @@ input.invalid {
   white-space: nowrap;
 }
 .av-bar.sel {
-  background: var(--accent);
+  background: var(--accent-fill);
   color: var(--accent-ink);
 }
 .av-bar-edge {
@@ -1745,13 +1749,19 @@ input.invalid {
   min-width: 0;
 }
 .av-audio-name {
+  flex: 0 1 auto;
+  min-width: 0;
   font: 600 15px var(--font-display);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .av-audio-head .muted {
+  flex: 0 10 auto;
+  min-width: 0;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .av-wave-box .timeline.av-tl {
   background: var(--surface);
@@ -1833,9 +1843,11 @@ input.invalid {
 }
 .av-norm-list {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 10px;
 }
 .av-norm-row {
+  min-width: 0;
   padding: 10px 12px 9px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
@@ -2902,7 +2914,8 @@ body:is([data-tool='rename'], [data-tool='protect'], [data-tool='unlock']) [hidd
 }
 .ai-card {
   position: absolute;
-  max-width: 360px;
+  max-width: min(360px, calc(100% - 32px));
+  overflow-wrap: anywhere;
   padding: 18px 20px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
@@ -3009,6 +3022,7 @@ body:is([data-tool='rename'], [data-tool='protect'], [data-tool='unlock']) [hidd
 }
 .ai-files-wrap {
   flex: 1;
+  min-width: 0;
   overflow-y: auto;
   padding: 24px 28px;
 }
@@ -3023,6 +3037,7 @@ body:is([data-tool='rename'], [data-tool='protect'], [data-tool='unlock']) [hidd
 }
 .ai-files {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 6px;
 }
 .ai-file {
@@ -3052,6 +3067,7 @@ body:is([data-tool='rename'], [data-tool='protect'], [data-tool='unlock']) [hidd
   object-fit: cover;
 }
 .ai-file-text {
+  flex: 1;
   display: flex;
   flex-direction: column;
   gap: 2px;

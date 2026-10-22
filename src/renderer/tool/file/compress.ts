@@ -329,7 +329,7 @@ export async function compress(paths: string[]) {
         pending
           ? 'Estimating…'
           : before
-            ? `About ${Math.round(saved * 100)}% smaller${unknown ? `, plus whatever the other ${unknown === 1 ? 'file' : `${unknown} files`} save` : ''}. Originals stay untouched.`
+            ? `About ${Math.round(saved * 100)}% smaller${unknown ? `, plus whatever ${unknown === 1 ? 'the other file saves' : `the other ${unknown} files save`}` : ''}. Originals stay untouched.`
             : 'The result depends on the content. Originals stay untouched.',
       ),
     );

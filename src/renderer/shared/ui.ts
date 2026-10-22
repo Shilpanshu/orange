@@ -24,6 +24,28 @@ export function h<K extends keyof HTMLElementTagNameMap>(
   return el;
 }
 
+// Any text cut short with an ellipsis shows its full value as a tooltip on hover, so long file
+// names stay readable everywhere without every list having to remember a title attribute.
+document.addEventListener(
+  'mouseover',
+  (e) => {
+    let el = e.target as HTMLElement | null;
+    for (let i = 0; el && i < 3; i++, el = el.parentElement) {
+      if (el.hasAttribute('title') && !el.dataset.autoTitle) return;
+      if (el.scrollWidth > el.clientWidth + 1 && getComputedStyle(el).textOverflow === 'ellipsis') {
+        el.title = el.textContent ?? '';
+        el.dataset.autoTitle = '1';
+        return;
+      }
+      if (el.dataset.autoTitle) {
+        el.removeAttribute('title');
+        delete el.dataset.autoTitle;
+      }
+    }
+  },
+  { passive: true },
+);
+
 export const base = (p: string) => p.split(/[\\/]/).pop() ?? p;
 export const dir = (p: string) => p.replace(/[\\/][^\\/]*$/, '');
 export const extOf = (p: string) => (/\.([^.\\/]+)$/.exec(p)?.[1] ?? '').toLowerCase();
@@ -37,7 +59,7 @@ export function shell(opts: { title: string; file?: string; layout?: 'split' | '
     { class: 'titlebar' },
     h('img', { class: 'app-mark', src: '../../assets/icon-32.png', alt: '' }),
     h('h1', {}, opts.title),
-    opts.file ? h('span', { class: 'file' }, opts.file) : null,
+    opts.file ? h('span', { class: 'file', title: opts.file }, opts.file) : null,
   );
   const main = h('div', { class: 'main' });
   const stage = h('div', { class: `stage${opts.plainStage ? ' plain' : ''}` });
@@ -47,7 +69,11 @@ export function shell(opts: { title: string; file?: string; layout?: 'split' | '
   if (layout === 'full') main.append(full);
   else if (layout === 'stage') main.append(stage);
   else main.append(stage, panel);
-  const status = h('span', { class: 'status' });
+  const status = h('span', { class: 'status', role: 'status' });
+  // The status line is clamped to two lines; the full text stays available as a tooltip.
+  new MutationObserver(() => {
+    status.title = (status.textContent ?? '').length > 60 ? (status.textContent ?? '') : '';
+  }).observe(status, { childList: true, characterData: true, subtree: true });
   const cancel = h('button', { class: 'btn', onclick: () => orange.send('window:close') }, 'Cancel');
   const primary = h('button', { class: 'btn primary' }, 'Save');
   const footer = h('div', { class: 'footer' }, status, presetSlot(primary, status), h('div', { class: 'spacer' }), cancel, primary);
@@ -55,7 +81,13 @@ export function shell(opts: { title: string; file?: string; layout?: 'split' | '
   document.title = opts.title;
   // Esc closes, Ctrl+Enter / Ctrl+S triggers the primary action.
   window.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && !(e.target as HTMLElement).closest('input,textarea,select')) orange.send('window:close');
+    if (e.key === 'Escape' && !e.defaultPrevented) {
+      // A field with something typed in it gives up focus first, so a half-typed value isn't lost;
+      // the next Esc closes the window.
+      const field = (e.target as HTMLElement).closest<HTMLInputElement | HTMLTextAreaElement>('input:not([type=range]):not([type=checkbox]),textarea');
+      if (field && field.value) field.blur();
+      else orange.send('window:close');
+    }
     if ((e.key === 'Enter' && e.ctrlKey) || (e.key.toLowerCase() === 's' && e.ctrlKey)) {
       e.preventDefault();
       primary.click();
@@ -106,9 +138,12 @@ export function slider(opts: {
 }
 
 export function segmented<T extends string>(options: { value: T; label: string }[], value: T, onChange: (v: T) => void) {
-  const el = h('div', { class: 'seg' });
+  const el = h('div', { class: 'seg', role: 'group' });
   const render = (v: T) => {
-    el.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.v === v));
+    el.querySelectorAll('button').forEach((b) => {
+      b.classList.toggle('on', b.dataset.v === v);
+      b.setAttribute('aria-pressed', String(b.dataset.v === v));
+    });
   };
   for (const o of options) {
     el.append(
@@ -280,7 +315,7 @@ export function enablePresets(toolId: string, getOptions: () => unknown) {
 function injectPresetStyles() {
   if (document.getElementById('preset-styles')) return;
   const css = `
-.preset-slot{display:flex;align-items:center;gap:6px;min-width:0}
+.preset-slot{display:flex;align-items:center;gap:6px;min-width:0;flex:none}
 .preset-slot[hidden]{display:none}
 .preset-slot .preset-link{color:var(--accent-strong);font-weight:500}
 .preset-slot input[type='text']{width:170px;height:26px;font-size:12px}

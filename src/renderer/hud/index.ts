@@ -24,7 +24,7 @@ function rowHtml(r: Row): string {
       ? `<button class="btn" data-cancel="${r.id}">Cancel</button>`
       : r.state === 'done'
         ? `<span class="state">${icon('check', 18, 2)}</span>`
-        : `<button class="btn" data-dismiss="${r.id}">${icon('close', 14)}</button>`;
+        : `<button class="btn" data-dismiss="${r.id}" title="Dismiss" aria-label="Dismiss">${icon('close', 14)}</button>`;
   const bar =
     r.state === 'running'
       ? `<div class="bar${r.progress <= 0 ? ' indeterminate' : ''}"><i style="transform:scaleX(${r.progress <= 0 ? 1 : r.progress})"></i></div>`
@@ -40,14 +40,15 @@ function rowHtml(r: Row): string {
     r.state === 'done' && r.outputs?.length
       ? `<div class="out">${r.outputs
           .slice(0, 3)
-          .map((p) => `<button data-reveal="${esc(p)}" title="Show in folder">${icon('folder', 14)}${esc(base(p))}</button>`)
-          .join('')}${r.outputs.length > 3 ? `<button data-reveal="${esc(r.outputs[0])}">+${r.outputs.length - 3} more</button>` : ''}${undo}</div>`
+          .map((p) => `<button data-reveal="${esc(p)}" title="${esc(base(p))}
+Click to show in folder, double-click to open">${icon('folder', 14)}<span>${esc(base(p))}</span></button>`)
+          .join('')}${r.outputs.length > 3 ? `<button data-reveal="${esc(r.outputs[0])}" title="Show in folder">+${r.outputs.length - 3} more</button>` : ''}${undo}</div>`
       : undo
         ? `<div class="out">${undo}</div>`
         : '';
   return `<div class="row ${r.state}" data-id="${r.id}">
-    <div class="title">${esc(r.state === 'done' ? r.title.replace(/^Converting /, 'Converted ') : r.title)}</div>${right}
-    ${note ? `<div class="note">${esc(note)}</div>` : ''}${bar}${outs}</div>`;
+    <div class="title" title="${esc(r.state === 'done' ? r.title.replace(/^Converting /, 'Converted ') : r.title)}">${esc(r.state === 'done' ? r.title.replace(/^Converting /, 'Converted ') : r.title)}</div>${right}
+    ${note ? `<div class="note" title="${esc(note)}">${esc(note)}</div>` : ''}${bar}${outs}</div>`;
 }
 
 let last = '';

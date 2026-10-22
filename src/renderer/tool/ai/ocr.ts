@@ -137,14 +137,15 @@ export async function ocrPage(paths: string[]) {
         pages += f.todo ?? 0;
         skip += has;
         if (r)
-          r.detail.textContent =
-            `PDF · ${f.pages} page${f.pages === 1 ? '' : 's'}` + (has ? (f.todo ? ` · ${has} already ${has === 1 ? 'has' : 'have'} text` : ' · already searchable') : '');
+          r.detail.textContent = !f.pages
+            ? "PDF · couldn't count the pages"
+            : `PDF · ${f.pages.toLocaleString()} page${f.pages === 1 ? '' : 's'}` + (has ? (f.todo ? ` · ${has.toLocaleString()} already ${has === 1 ? 'has' : 'have'} text` : ' · already searchable') : '');
       } else {
         pages += 1;
         if (r && f.w) r.detail.textContent = `Image · ${f.w} × ${f.h}`;
       }
     }
-    pagesRow.replaceChildren(h('span', {}, 'Pages to read'), h('strong', {}, String(pages) + (skip ? ` (${skip} skipped)` : '')));
+    pagesRow.replaceChildren(h('span', {}, 'Pages to read'), h('strong', {}, pages.toLocaleString() + (skip ? ` (${skip.toLocaleString()} skipped)` : '')));
     timeRow.replaceChildren(h('span', {}, 'Time'), h('strong', {}, pages ? fmtDuration(st.ms) : '–'));
     const nothing = pages === 0 && o.output === 'pdf';
     s.primary.disabled = nothing;

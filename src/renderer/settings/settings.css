@@ -62,7 +62,7 @@
 }
 .opt .text {
   flex: 1;
-  min-width: 0;
+  min-width: 96px;
 }
 .opt .text strong {
   display: block;
@@ -186,6 +186,7 @@
 }
 .keycap {
   display: inline-block;
+  white-space: nowrap;
   min-width: 52px;
   text-align: center;
   font-weight: 600;
@@ -197,6 +198,7 @@
 }
 .status-dot {
   display: inline-block;
+  flex: none !important;
   width: 8px;
   height: 8px;
   border-radius: 50%;
@@ -241,4 +243,54 @@
   color: var(--ink);
   font-size: 14px;
   margin: 18px 0 6px;
+}
+
+/* Saving: a chosen folder path stays on one line next to its button. */
+.opt > .row.folder-row {
+  flex: 0 1 380px;
+  min-width: 0;
+}
+.folder-row .folder-path {
+  flex: 1;
+  min-width: 0;
+  color: var(--ink-2);
+  font-size: 12.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  direction: rtl;
+  text-align: left;
+}
+.folder-row .btn {
+  flex: none;
+}
+
+/* The settings window can be as narrow as 620 px: keep labels readable before controls. */
+@media (max-width: 700px) {
+  .nav {
+    width: 160px;
+  }
+  .content {
+    padding: 20px 20px 32px;
+  }
+  .hero {
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+  .demo {
+    width: 160px;
+    height: 160px;
+  }
+  .opt select {
+    width: 140px;
+  }
+  .opt .hotkey-input {
+    width: 150px;
+  }
+  .opt .seg {
+    width: 190px;
+  }
+  .keys-table td:first-child {
+    width: 110px;
+  }
 }

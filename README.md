@@ -24,7 +24,17 @@ It's a Windows take on the drag-and-tap idea of the Mac app Tangerine, built fro
 
 Orange updates itself from GitHub Releases. New versions download in the background and install the next time you quit.
 
-Requires Windows 10 or 11, 64-bit.
+Requires Windows 10 or 11, 64-bit. The installer is about 250 MB and Orange takes about 740 MB on disk. AI models download separately, the first time you use each AI tool.
+
+## What's new in 1.2
+
+- **New tools:** OCR, Remove background, Upscale, Subtitles from speech, bulk Rename, Protect and Unlock.
+- **New ways in:** Explorer's right-click menu, clipboard conversion (Ctrl + Alt + V) and watch folders.
+- **A wheel that learns:** pinned slices, the last-used slice one drop away, presets as slices, and a preview of what you're dragging.
+- **Undo** on every finished job, and plain-language error messages.
+- **Faster video:** encoding uses the graphics card (NVIDIA, Intel or AMD) when it can, and falls back to the processor automatically.
+- **Smaller:** about 740 MB installed, down from 1.1 GB, with the new AI tools included.
+- **Polish:** every window passes WCAG AA contrast in light and dark, works at small sizes, and handles long or non-Latin file names.
 
 ## How to use
 
@@ -36,9 +46,25 @@ Requires Windows 10 or 11, 64-bit.
 
 Release the key and keep holding the file; the wheel stays open until you drop or press **Esc**. Tap another key to switch wheels, or use the arrow keys to pick a slice.
 
-You can also select files in Explorer and press **Ctrl + Shift + Space** to open the wheel and click a slice.
+You can also select files in Explorer and press **Ctrl + Shift + Space** to open the wheel and click a slice, or right-click files and choose **Orange → Convert / Tools / Actions**. On Windows 11 that menu is under **Show more options**.
 
 The keys can be changed in **Settings → Shortcuts** (click the tray icon).
+
+### Make the wheel yours
+
+- **Pin slices.** Open the wheel with Ctrl + Shift + Space and right-click a slice to pin it. Pinned slices come first, marked with a star, for that kind of file.
+- **Repeat the last choice.** The slice you used last for a file type has a small dot and is pre-selected: drop on the centre of the wheel to use it again.
+- **See what you're dragging.** Once Orange knows the exact files, the centre of the wheel shows a thumbnail and the file name.
+- **Presets.** Tool windows such as Compress, Crop, Speed and Normalize have **Save as preset…**. A preset becomes its own slice on the Tools wheel, so your usual settings are one drop away.
+- **Undo.** Every finished job in the corner panel has **Undo**. New files go to the Recycle Bin; a Move goes back where it came from; a Rename restores the old names.
+
+### Convert the clipboard
+
+Copy an image, some text or files, then press **Ctrl + Alt + V** (or choose **Convert clipboard…** in the tray menu) and pick a format. Images become PNG, JPG, WebP or PDF; text becomes TXT, Markdown, PDF or Word.
+
+### Watch folders
+
+**Settings → Automation** can watch a folder and convert new files automatically, for example every new HEIC photo to JPG, or every download to MP3. Orange waits until a file has finished downloading or copying, never processes its own results, and can move the original to the Recycle Bin once the result is safely written.
 
 ## What it converts
 
@@ -56,18 +82,31 @@ The keys can be changed in **Settings → Shortcuts** (click the tray icon).
 | Archives (ZIP, TAR, GZ, 7Z, RAR) | Extract, ZIP, TAR, GZIP, 7Z |
 | Folders and mixed selections | ZIP |
 
-Video that already uses a compatible codec is repackaged without re-encoding, so MOV to MP4 usually takes about a second.
+Video that already uses a compatible codec is repackaged without re-encoding, so MOV to MP4 usually takes about a second. When a video does need re-encoding, Orange uses the graphics card's encoder (NVIDIA NVENC, Intel Quick Sync or AMD AMF) if there is one, typically 2–3× faster than the processor at the same visual quality. Turn it off in **Settings → General** if you prefer the smallest possible files.
 
 Word, PowerPoint and Excel files use Microsoft Office when it's installed. Without Office, Orange can install LibreOffice for you from **Settings → Engines**. Apple Pages, Keynote and Numbers files need LibreOffice.
 
 ## Tools
 
-- **Any file:** Compress (target size, percentage or quality; never overwrites the original), Edit metadata
-- **Images:** Edit photo (light, colour, detail with a live preview), Annotate, Add a background, Crop, Redact (finds faces and text automatically, on your PC), Make a PDF, Collage
-- **Video:** Trim, Crop, Change speed, Join, Save frames, Split, Redact
-- **Audio:** Normalize loudness, Audio visualizer video, Trim, Mono/stereo and channel volume, Bleep, Join
-- **PDF:** Merge, Organize pages (reorder, rotate, duplicate, delete), Split
-- **Archives:** Extract
+- **Any file:** Compress (target size, percentage or quality; never overwrites the original), Edit metadata, Rename in bulk (replace, numbering, case, date taken, with a live preview and undo), Protect with a password (AES-256 PDF, or an encrypted ZIP or 7z)
+- **Images:** Edit photo (light, colour, detail with a live preview), Annotate, Add a background, Crop, Redact (finds faces and text automatically, on your PC), Make a PDF, Collage, Remove background, Upscale 2× or 4× (Photo or Illustration), OCR
+- **Video:** Trim, Crop, Change speed, Join, Save frames, Split, Redact, Subtitles from speech
+- **Audio:** Normalize loudness, Audio visualizer video, Trim, Mono/stereo and channel volume, Bleep, Join, Subtitles from speech
+- **PDF:** Merge, Organize pages (reorder, rotate, duplicate, delete), Split, OCR (makes scans searchable), Protect, Unlock
+- **Archives:** Extract, Unlock
+
+### AI tools run on your PC
+
+OCR, Remove background, Upscale and Subtitles use AI models that run locally, on the graphics card when it helps. Each model downloads once, the first time you use the tool, and after that everything works offline.
+
+| Tool | Model | Download |
+| --- | --- | --- |
+| OCR | Tesseract (English included; 18 more languages, 1–3 MB each) | none for English |
+| Upscale | Real-ESRGAN (Photo) or a lightweight anime Real-ESRGAN (Illustration) | about 5 MB each |
+| Remove background | BRIA RMBG-1.4 | 176 MB |
+| Subtitles | Whisper: Fast, Balanced or Best | 79 MB, 252 MB or 1.09 GB |
+
+Subtitles can be saved as SRT, VTT or plain text, burned into a copy of the video, or added as a subtitle track you can switch on and off. You can review and edit every line before saving. RMBG-1.4 is licensed for non-commercial use only.
 
 ## Actions
 
@@ -75,7 +114,7 @@ Word, PowerPoint and Excel files use Microsoft Office when it's installed. Witho
 
 ## Privacy
 
-Everything runs on your PC. Orange never uploads your files, collects no analytics and has no account. It only goes online to check GitHub for updates and, if you ask, to download LibreOffice.
+Everything runs on your PC. Orange never uploads your files, collects no analytics and has no account. It only goes online to check GitHub for updates, to download an AI model or OCR language the first time you use it, and, if you ask, to download LibreOffice.
 
 ## Something went wrong?
 
@@ -155,7 +194,11 @@ Orange ships these programs unmodified, each under its own licence. Their licenc
 | [Pandoc](https://pandoc.org) | Document conversion | GPL v2+ |
 | [Ghostscript](https://www.ghostscript.com) | PDF rendering and compression | AGPL v3 |
 | [pdf-lib](https://pdf-lib.js.org), [PDF.js](https://mozilla.github.io/pdf.js/) | PDF tools | MIT, Apache 2.0 |
-| [Tesseract.js](https://tesseract.projectnaptha.com), [MediaPipe](https://ai.google.dev/edge/mediapipe) | Offline text and face detection | Apache 2.0 |
+| [Tesseract.js](https://tesseract.projectnaptha.com), [MediaPipe](https://ai.google.dev/edge/mediapipe) | Offline text and face detection, OCR | Apache 2.0 |
+| [Transformers.js](https://huggingface.co/docs/transformers.js), [ONNX Runtime](https://onnxruntime.ai) | Running AI models locally (CPU or DirectML) | Apache 2.0, MIT |
+| [Whisper](https://github.com/openai/whisper) models | Subtitles (downloaded on first use) | MIT |
+| [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN) models | Upscale (downloaded on first use) | BSD 3-Clause, MIT |
+| [BRIA RMBG-1.4](https://huggingface.co/briaai/RMBG-1.4) | Remove background (downloaded on first use) | BRIA RMBG-1.4 licence (non-commercial) |
 
 ## Licence
 

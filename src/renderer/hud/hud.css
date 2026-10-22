@@ -40,7 +40,9 @@ body {
   color: var(--ink-2);
   font-size: 12px;
   white-space: pre-wrap;
-  max-height: 64px;
+  overflow-wrap: anywhere;
+  line-height: 1.4;
+  max-height: 84px;
   overflow: hidden;
 }
 .row.failed .note {
@@ -96,6 +98,7 @@ body {
 }
 .out button {
   max-width: 100%;
+  min-width: 0;
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -132,4 +135,20 @@ body {
 .row.notice .title {
   font-weight: 500;
   white-space: normal;
+}
+.out button > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.out button svg {
+  flex: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  /* A still, half-tone bar says "working" without the sliding loop. */
+  .bar.indeterminate > i {
+    animation: none;
+    width: 100%;
+    opacity: 0.45;
+  }
 }

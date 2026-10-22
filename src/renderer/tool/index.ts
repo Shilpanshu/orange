@@ -17,13 +17,15 @@ document.body.dataset.tool = tool;
 const pageFn = PAGES[tool];
 if (!pageFn) {
   const s = shell({ title: 'Orange', layout: 'full' });
-  s.full.append(h('p', { class: 'empty-state' }, `The "${tool}" tool is not available in this build.`));
+  s.full.append(h('p', { class: 'empty-state' }, `The "${tool}" tool isn't available in this version of Orange.`));
   s.primary.remove();
+  s.cancel.textContent = 'Close';
 } else {
   Promise.resolve(pageFn(paths)).catch((e) => {
     console.error(e);
     const s = shell({ title: 'Something went wrong', layout: 'full' });
     s.full.append(h('p', { class: 'empty-state' }, String(e?.message ?? e)));
     s.primary.remove();
+    s.cancel.textContent = 'Close';
   });
 }

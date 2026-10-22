@@ -160,6 +160,9 @@ h2 {
 .choice:hover {
   background: var(--surface-2);
 }
+.choice:focus-visible {
+  outline: none;
+}
 .choice[aria-selected='true'],
 .choice:focus-visible,
 .choice:focus {
@@ -179,7 +182,14 @@ footer {
   font-size: 11.5px;
   color: var(--ink-3);
 }
+footer > span:first-child {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 footer .keys {
+  flex: none;
   white-space: nowrap;
 }
 kbd {

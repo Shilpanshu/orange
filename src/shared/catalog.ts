@@ -133,7 +133,7 @@ export const TOOLS: ToolDef[] = [
   { id: 'metadata', label: 'Metadata', icon: 'metadata', kinds: ['image', 'video', 'audio', 'pdf'], multi: 'optional', blurb: 'Inspect, edit or strip embedded info' },
   { id: 'editImage', label: 'Edit', icon: 'edit', kinds: ['image'], single: true, blurb: 'Light, color and detail with live preview' },
   { id: 'annotateImage', label: 'Annotate', icon: 'annotate', kinds: ['image'], single: true, blurb: 'Arrows, shapes, text and callouts' },
-  { id: 'frameImage', label: 'Add BG', icon: 'frame', kinds: ['image'], single: true, blurb: 'Put the image on a backdrop' },
+  { id: 'frameImage', label: 'Background', icon: 'frame', kinds: ['image'], single: true, blurb: 'Put the image on a backdrop' },
   { id: 'cropImage', label: 'Crop', icon: 'crop', kinds: ['image'], multi: 'optional', blurb: 'Exact area or aspect ratio' },
   { id: 'redactImage', label: 'Redact', icon: 'redact', kinds: ['image'], single: true, blurb: 'Hide faces, text or any area' },
   { id: 'createPdf', label: 'Make PDF', icon: 'pdf', kinds: ['image'], multi: 'required', blurb: 'One page per image' },
@@ -191,7 +191,7 @@ export const ACTIONS: ActionDef[] = [
   { id: 'float', label: 'Float', icon: 'float', blurb: 'Park files on a floating shelf' },
   { id: 'copy', label: 'Copy', icon: 'copy', blurb: 'Copy, ready to paste in Explorer' },
   { id: 'move', label: 'Move', icon: 'move', blurb: 'Move to another folder' },
-  { id: 'copyPath', label: 'Copy Path', icon: 'path', blurb: 'Full paths as text' },
+  { id: 'copyPath', label: 'Copy path', icon: 'path', blurb: 'Full paths as text' },
   { id: 'terminal', label: 'Terminal', icon: 'terminal', blurb: 'Open the folder in a terminal' },
 ];
 

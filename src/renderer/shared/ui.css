@@ -27,9 +27,13 @@ body {
 .titlebar h1 {
   margin: 0;
   font: 600 13px var(--font);
+  flex: none;
+  white-space: nowrap;
 }
 .titlebar .file {
-  color: var(--ink-3);
+  flex: 0 1 auto;
+  min-width: 0;
+  color: var(--ink-2);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -69,6 +73,8 @@ body {
   border-left: 1px solid var(--line);
   background: var(--surface);
   overflow-y: auto;
+  overflow-x: hidden;
+  overflow-wrap: break-word;
   padding: 6px 0 16px;
 }
 .panel.wide {
@@ -76,7 +82,9 @@ body {
 }
 .full {
   flex: 1;
+  min-width: 0;
   overflow-y: auto;
+  overflow-wrap: break-word;
   padding: 20px 24px;
 }
 
@@ -106,6 +114,8 @@ body {
   font-size: 12.5px;
 }
 .field > label output {
+  flex: none;
+  margin-left: 8px;
   color: var(--ink);
   font-variant-numeric: tabular-nums;
 }
@@ -185,6 +195,7 @@ input[type='checkbox'] {
   display: flex;
   gap: 8px;
   align-items: center;
+  line-height: 1.35;
   margin-bottom: 10px;
   cursor: pointer;
 }
@@ -208,6 +219,12 @@ input[type='checkbox'] {
   color: var(--ink-2);
   white-space: nowrap;
   font-size: 12px;
+}
+.seg button:hover:not(.on) {
+  color: var(--ink);
+}
+.seg button:focus-visible {
+  outline-offset: 0;
 }
 .seg button.on {
   background: var(--surface);
@@ -237,17 +254,25 @@ input[type='checkbox'] {
   transform: translateY(0.5px);
 }
 .btn.primary {
-  background: var(--accent);
-  border-color: var(--accent);
+  background: var(--accent-fill);
+  border-color: var(--accent-fill);
   color: var(--accent-ink);
   font-weight: 600;
 }
 .btn.primary:hover {
-  background: var(--accent-strong);
+  background: var(--accent-fill-hover);
+  border-color: var(--accent-fill-hover);
 }
 .btn:disabled {
-  opacity: 0.5;
+  opacity: 0.45;
   pointer-events: none;
+}
+.btn.primary:disabled {
+  /* A muted fill reads as unavailable without turning the label into low-contrast pink. */
+  background: var(--surface-3);
+  border-color: var(--surface-3);
+  color: var(--ink-2);
+  opacity: 1;
 }
 .btn.icon {
   width: 32px;
@@ -267,7 +292,7 @@ input[type='checkbox'] {
 }
 .btn.on {
   border-color: var(--accent);
-  color: var(--accent);
+  color: var(--accent-strong);
 }
 
 .toolbar {
@@ -300,9 +325,23 @@ input[type='checkbox'] {
   flex: 1;
 }
 .footer .status {
+  min-width: 0;
+  flex: 0 1 auto;
   color: var(--ink-2);
   font-size: 12px;
+  line-height: 1.35;
   font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+.footer .status:empty,
+.footer .status[hidden] {
+  display: none;
+}
+.footer > .btn {
+  flex: none;
 }
 
 /* lists of files (merge/join/collage ordering) */
@@ -419,10 +458,11 @@ input[type='checkbox'] {
 }
 
 .empty-state {
-  color: var(--ink-3);
+  color: var(--ink-2);
   text-align: center;
   max-width: 320px;
   line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 .kbd {
   font-family: var(--font);
@@ -443,4 +483,40 @@ input[type='checkbox'] {
   border-radius: 5px;
   border: 3px solid transparent;
   background-clip: content-box;
+}
+
+/* Narrow windows (a tool window can be dragged down to 460 px): stack the preview above the
+   options and scroll the pair, instead of squeezing the preview into a 160 px sliver. */
+@media (max-width: 640px) {
+  body[data-tool] .titlebar {
+    gap: 8px;
+  }
+  body[data-tool] .main {
+    flex-direction: column;
+    overflow-y: auto;
+    overflow-x: hidden;
+  }
+  body[data-tool] .main > .stage {
+    flex: none;
+    height: max(220px, 56vh);
+  }
+  /* Players with a transport and timeline under the picture need a little more room. */
+  body[data-tool] .main > .stage.av-stage {
+    height: max(300px, 62vh);
+  }
+  body[data-tool] .main > .panel,
+  body[data-tool] .main > .panel.wide {
+    width: auto;
+    flex: none;
+    overflow: visible;
+    border-left: 0;
+    border-top: 1px solid var(--line);
+  }
+  body[data-tool] .footer {
+    padding: 0 12px;
+    gap: 6px;
+  }
+  body[data-tool] .footer .btn {
+    padding: 0 12px;
+  }
 }
