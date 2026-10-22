@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Orange windows: the bridge commands and event listening only.",
+  "windows": ["wheel", "hud", "settings"],
+  "permissions": ["core:event:allow-listen", "core:event:allow-unlisten"]
+}

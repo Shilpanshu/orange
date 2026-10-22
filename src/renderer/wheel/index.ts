@@ -233,6 +233,8 @@ orange.on(
     stage.style.transformOrigin = `${o.cursor.x}px ${o.cursor.y}px`;
     render(swap);
     show(true);
+    // Tells the host the wheel is painted (Orange 2 measures open latency from this).
+    requestAnimationFrame(() => orange.send('wheel:shown'));
   },
 );
 
@@ -324,14 +326,34 @@ window.addEventListener('dragleave', () => {
 window.addEventListener('drop', (e) => {
   e.preventDefault();
   const files = Array.from(e.dataTransfer?.files ?? []);
-  const paths = files.map((f) => orange.pathForFile(f)).filter(Boolean);
-  let i = segmentAt(e.clientX, e.clientY);
+  dropAt(e.clientX, e.clientY, files.map((f) => orange.pathForFile(f)).filter(Boolean));
+});
+
+function dropAt(x: number, y: number, paths: string[]) {
+  let i = segmentAt(x, y);
   // Dropped on the centre: arrow-key choice or last time's choice. A drop outside the ring (the
   // window's transparent corners) is a cancel, as in click mode.
-  if (i < 0 && Math.hypot(e.clientX - C, e.clientY - C) < R_IN) i = picked;
+  if (i < 0 && Math.hypot(x - C, y - C) < R_IN) i = picked;
   if (i < 0 || !paths.length) return orange.send('wheel:dismiss');
   // The real file names may disagree with the MIME guess; the main process re-validates.
   choose(i, paths);
+}
+
+// Orange 2 (Tauri): the window's own OLE drop target reports the exact dragged paths on enter,
+// so no MIME guessing is needed. Coordinates are CSS pixels in the window.
+orange.on('wheel:drag', (d: { type: 'enter' | 'over' | 'drop' | 'leave'; paths?: string[]; x: number; y: number }) => {
+  if (d.type === 'leave') {
+    if (hover !== -1) setActive(-1);
+    return;
+  }
+  if (d.type === 'drop') return dropAt(d.x, d.y, d.paths ?? []);
+  if (d.type === 'enter' && d.paths && !knownPaths) {
+    selPaths = d.paths;
+    dragCount = d.paths.length;
+    applySelection();
+  }
+  const i = segmentAt(d.x, d.y);
+  if (i !== hover) setActive(i);
 });
 
 // ------------------------------------------- click mode (Explorer selection hotkey)

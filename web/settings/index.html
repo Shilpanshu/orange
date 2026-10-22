@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Orange Settings</title>
+    <link rel="stylesheet" href="../shared/base.css" />
+    <style>
+      body { background: var(--bg); color: var(--ink); font: 14px/1.5 var(--font); margin: 0; padding: 28px 32px; }
+      h1 { font: 600 20px/1.2 var(--font-display); margin: 0 0 4px; }
+      p { color: var(--ink-2); margin: 0 0 16px; max-width: 46ch; }
+      dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 18px; margin: 0; }
+      dt { color: var(--ink-3); }
+      kbd { font: 12px var(--mono); background: var(--surface-2); border: 1px solid var(--line); border-radius: 4px; padding: 1px 6px; }
+    </style>
+  </head>
+  <body>
+    <h1>Orange</h1>
+    <p>Drag a file, tap a key while you still hold it, and drop it on a slice. This preview build converts PNG, JPG and WebP; the full Settings window comes back in a later build.</p>
+    <dl>
+      <dt>Convert</dt><dd><kbd>Shift</kbd></dd>
+      <dt>Tools</dt><dd><kbd>Ctrl</kbd></dd>
+      <dt>Actions</dt><dd><kbd>Alt</kbd></dd>
+      <dt>Version</dt><dd id="ver"></dd>
+    </dl>
+    <script src="index.js"></script>
+  </body>
+</html>

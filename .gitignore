@@ -3,3 +3,6 @@ dist/
 release/
 vendor/bin/
 *.log
+web-dist/
+src-tauri/target/
+src-tauri/gen/
