@@ -23,6 +23,34 @@ pub struct AppState {
     pub hud: hud::HudState,
 }
 
+/// WebView2 command-line switches. Every webview sharing the user-data folder must use the same
+/// ones (WebView2 refuses a second environment with different arguments). The first part is
+/// wry's default. `ORANGE_BROWSER_ARGS` overrides it for measurements.
+pub fn browser_args() -> String {
+    std::env::var("ORANGE_BROWSER_ARGS").unwrap_or_else(|_| {
+        "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,Translate,OptimizationHints,AutofillServerCommunication \
+         --disable-gpu --disable-background-networking --renderer-process-limit=1 --no-pings"
+            .into()
+    })
+}
+
+/// Asks WebView2 to trim a hidden webview's memory (or restore it before showing).
+pub fn set_low_memory(w: &tauri::WebviewWindow, low: bool) {
+    if std::env::var("ORANGE_LOW_MEM").as_deref() == Ok("0") {
+        return;
+    }
+    let _ = w.with_webview(move |wv| unsafe {
+        use webview2_com::Microsoft::Web::WebView2::Win32::*;
+        use windows::core::Interface;
+        if let Ok(core) = wv.controller().CoreWebView2() {
+            if let Ok(c19) = core.cast::<ICoreWebView2_19>() {
+                let level = if low { COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_LOW } else { COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_NORMAL };
+                let _ = c19.SetMemoryUsageTargetLevel(level);
+            }
+        }
+    });
+}
+
 /// Which wheel a modifier opens (Settings will make this configurable, as in 1.x).
 fn wheel_for(m: Mod) -> &'static str {
     match m {
@@ -42,6 +70,7 @@ fn open_settings(app: &AppHandle) {
     let _ = WebviewWindowBuilder::new(app, "settings", WebviewUrl::App("renderer/settings/index.html".into()))
         .title("Orange Settings")
         .inner_size(520.0, 360.0)
+        .additional_browser_args(&browser_args())
         .drag_and_drop(false)
         .build();
 }
@@ -100,11 +129,19 @@ pub fn run() {
                 log::init(dir);
             }
             build_tray(&handle)?;
-            wheel::create(&handle)?;
             let (tx, rx) = std::sync::mpsc::channel();
             hooks::start(tx);
             spawn_event_loop(handle.clone(), rx);
-            log::write(&format!("started in {:.1} ms", started.elapsed().as_secs_f64() * 1000.0));
+            log::write(&format!("tray and hooks up in {:.1} ms", started.elapsed().as_secs_f64() * 1000.0));
+            // The wheel's webview takes a few hundred ms to create; do it after the tray is up so
+            // start-up isn't held for it. It is ready long before anyone can start a drag.
+            let h = handle.clone();
+            std::thread::spawn(move || {
+                if let Err(e) = wheel::create(&h) {
+                    log::write(&format!("wheel window: {e}"));
+                }
+                log::write(&format!("wheel window created at {:.1} ms", started.elapsed().as_secs_f64() * 1000.0));
+            });
             #[cfg(feature = "selftest")]
             selftest::maybe_start(&handle, started);
             Ok(())

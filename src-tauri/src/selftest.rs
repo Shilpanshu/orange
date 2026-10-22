@@ -85,20 +85,43 @@ pub fn maybe_start(app: &AppHandle, started: Instant) {
     let out = PathBuf::from(&args[i + 2]);
     let app = app.clone();
     std::thread::spawn(move || {
-        let res = run(&app, &file, started);
+        let dir = out.parent().map(|p| p.to_path_buf()).unwrap_or_default();
+        let res = run(&app, &file, &dir, started);
         let _ = std::fs::write(&out, serde_json::to_string_pretty(&res).unwrap());
         app.exit(if res["ok"].as_bool() == Some(true) { 0 } else { 1 });
     });
 }
 
-fn run(app: &AppHandle, file: &PathBuf, started: Instant) -> serde_json::Value {
+fn capture(r: RECT, path: &std::path::Path) -> bool {
+    use windows::Win32::Graphics::Gdi::*;
+    unsafe {
+        let (w, h) = (r.right - r.left, r.bottom - r.top);
+        let screen = GetDC(None);
+        let mem = CreateCompatibleDC(Some(screen));
+        let bmp = CreateCompatibleBitmap(screen, w, h);
+        let old = SelectObject(mem, bmp.into());
+        let _ = BitBlt(mem, 0, 0, w, h, Some(screen), r.left, r.top, SRCCOPY);
+        SelectObject(mem, old);
+        let px = crate::win::bitmap_rgba(bmp);
+        let _ = DeleteObject(bmp.into());
+        let _ = DeleteDC(mem);
+        ReleaseDC(None, screen);
+        let Some((w, h, mut px)) = px else { return false };
+        for p in px.chunks_exact_mut(4) {
+            p[3] = 255;
+        }
+        image::RgbaImage::from_raw(w, h, px).is_some_and(|img| img.save(path).is_ok())
+    }
+}
+
+fn run(app: &AppHandle, file: &PathBuf, out_dir: &std::path::Path, started: Instant) -> serde_json::Value {
     let st = app.state::<AppState>();
     let ready = wait(Duration::from_secs(15), || st.wheel.is_ready());
     let ready_ms = started.elapsed().as_secs_f64() * 1000.0;
     if !ready {
         return json!({ "ok": false, "error": "wheel page never loaded" });
     }
-    std::thread::sleep(Duration::from_millis(1500)); // let start-up settle, like a real first drag
+    std::thread::sleep(Duration::from_millis(5000)); // settle, and let the hidden wheel be trimmed, as before a real drag
 
     // 1. Synthetic drag + Shift tap, through the hooks' state machine.
     let mut p = POINT::default();
@@ -134,6 +157,9 @@ fn run(app: &AppHandle, file: &PathBuf, started: Instant) -> serde_json::Value {
     let fg_is_wheel = unsafe { GetForegroundWindow() } == hwnd;
     let (hit_slice, slice_class) = hits(hwnd, slice.0, slice.1);
     let (hit_corner, corner_class) = hits(hwnd, corner.0, corner.1);
+    // A screen capture of the open wheel (shows that it renders and its corners are see-through).
+    let shot = out_dir.join("wheel-capture.png");
+    let captured = capture(r, &shot);
 
     // 3. Find the registered drop targets and the shell data object, then drive the drop.
     let path = file.to_string_lossy().into_owned();
@@ -225,6 +251,7 @@ fn run(app: &AppHandle, file: &PathBuf, started: Instant) -> serde_json::Value {
         "hit_test_transparent_corner": { "hits_wheel": hit_corner, "class": corner_class },
         "windows_with_drop_target": found,
         "drop_target_used": target_class,
+        "screen_capture": if captured { shot.to_string_lossy().into_owned() } else { String::new() },
         "drag_enter_effect": format!("{enter:?}"),
         "drag_over_effects": format!("{over:?}"),
         "drop_effect": format!("{dropped:?}"),

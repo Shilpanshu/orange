@@ -98,7 +98,7 @@ pub fn thumbnail_data_url(path: &str, px: i32) -> Option<String> {
     }
 }
 
-unsafe fn bitmap_rgba(hbm: HBITMAP) -> Option<(u32, u32, Vec<u8>)> {
+pub unsafe fn bitmap_rgba(hbm: HBITMAP) -> Option<(u32, u32, Vec<u8>)> {
     let mut bm = BITMAP::default();
     if GetObjectW(hbm.into(), std::mem::size_of::<BITMAP>() as i32, Some(&mut bm as *mut _ as *mut _)) == 0 {
         return None;

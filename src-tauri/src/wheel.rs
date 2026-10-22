@@ -56,6 +56,18 @@ impl WheelState {
     pub fn mark_ready(&self) {
         self.ready.store(true, Ordering::SeqCst);
     }
+    /// Trim the hidden wheel's memory once its page has loaded and warmed up.
+    pub fn trim_soon(app: &AppHandle) {
+        let app = app.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_secs(3));
+            if !app.state::<AppState>().wheel.is_open() {
+                if let Some(w) = app.get_webview_window(LABEL) {
+                    crate::set_low_memory(&w, true);
+                }
+            }
+        });
+    }
     pub fn is_ready(&self) -> bool {
         self.ready.load(Ordering::SeqCst)
     }
@@ -88,6 +100,7 @@ impl WheelState {
 pub fn create(app: &AppHandle) -> tauri::Result<WebviewWindow> {
     let w = WebviewWindowBuilder::new(app, LABEL, WebviewUrl::App("renderer/wheel/index.html".into()))
         .title("Orange wheel")
+        .additional_browser_args(&crate::browser_args())
         .inner_size(SIZE, SIZE)
         .resizable(false)
         .maximizable(false)
@@ -177,6 +190,7 @@ pub fn open(app: &AppHandle, kind: &str, mode: Mode, paths: Option<Vec<String>>)
     });
     bridge::emit(app, LABEL, "wheel:open", json!([payload]));
     if !was_open {
+        crate::set_low_memory(&w, false);
         win::show_no_activate(hwnd, mode == Mode::Click);
     }
     if let Some(p) = paths {
@@ -237,6 +251,7 @@ pub fn close(app: &AppHandle) {
                 if let Ok(h) = w.hwnd() {
                     win::hide(h);
                 }
+                crate::set_low_memory(&w, true);
             }
         }
     });

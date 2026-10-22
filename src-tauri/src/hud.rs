@@ -64,6 +64,7 @@ fn ensure_window(app: &AppHandle) {
     st(app).hud.page_ready.store(false, Ordering::SeqCst);
     let built = WebviewWindowBuilder::new(app, LABEL, WebviewUrl::App("renderer/hud/index.html".into()))
         .title("Orange progress")
+        .additional_browser_args(&crate::browser_args())
         .inner_size(W, 80.0)
         .resizable(false)
         .decorations(false)

@@ -40,6 +40,7 @@ pub async fn bridge_send(window: WebviewWindow, channel: String, args: Vec<Value
         "page:ready" => {
             if label == "wheel" {
                 app.state::<AppState>().wheel.mark_ready();
+                wheel::WheelState::trim_soon(&app);
             } else if label == "hud" {
                 hud::page_ready(&app);
             }
