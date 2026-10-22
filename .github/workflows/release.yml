@@ -48,6 +48,20 @@ jobs:
       - name: Download bundled tools (FFmpeg, 7-Zip, ImageMagick, Pandoc, Ghostscript)
         run: npm run vendor
 
+      # Every conversion and tool against generated files; a failure stops the release.
+      - name: Regression tests
+        run: npm test
+        env:
+          ORANGE_TEST_REPORT_DIR: ${{ runner.temp }}/orange-test-results
+
+      - name: Keep the test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: orange-test-report
+          path: ${{ runner.temp }}/orange-test-results/
+          if-no-files-found: ignore
+
       # Create the release up front. electron-builder uploads files in parallel and, if no
       # release exists yet, each upload can create its own copy of the release.
       - name: Create the GitHub release

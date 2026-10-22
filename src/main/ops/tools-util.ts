@@ -613,7 +613,7 @@ async function unlockPdf(src: string, password: string, ctx: Ctx, onFrac: (f: nu
   try {
     const r = await run(
       bin(GS),
-      ['-sDEVICE=pdfwrite', '-dNOPAUSE', '-dBATCH', '-dSAFER', '-dAutoRotatePages=/None', '-dPreserveAnnots=true', `-sPDFPassword=${password}`, `-sOutputFile=${dest}`, src],
+      ['-sDEVICE=pdfwrite', '-dNOPAUSE', '-dBATCH', '-dSAFER', '-dAutoRotatePages=/None', '-dPreserveAnnots=true', `-sPDFPassword=${password}`, `-sOutputFile=${dest.replace(/%/g, '%%')}`, src], // %% = literal % for Ghostscript
       {
         signal: ctx.signal,
         redact: [password],

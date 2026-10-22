@@ -10,7 +10,8 @@
     "dist": "node scripts/dist.mjs",
     "typecheck": "tsc --noEmit",
     "vendor": "node scripts/fetch-vendor.mjs",
-    "release": "node scripts/dist.mjs --publish"
+    "release": "node scripts/dist.mjs --publish",
+    "test": "node tests/run-tests.mjs"
   },
   "repository": {
     "type": "git",

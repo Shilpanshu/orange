@@ -377,7 +377,8 @@ async function compressPdf(input: string, out: string, level: PdfLevel, ctx: Ctx
         [
           '-sDEVICE=pdfwrite', '-dCompatibilityLevel=1.6', `-dPDFSETTINGS=/${level}`, '-dNOPAUSE', '-dBATCH', '-dSAFER',
           '-dDetectDuplicateImages=true', '-dCompressFonts=true', '-dAutoRotatePages=/None',
-          `-sOutputFile=${out}`, input,
+          // Ghostscript treats % in OutputFile as a page-number pattern; %% is a literal %.
+          `-sOutputFile=${out.replace(/%/g, '%%')}`, input,
         ],
         {
           signal: ctx.signal,
