@@ -11,7 +11,7 @@
 //   ORANGE_TEST_REPORT_DIR=d  also copy report.json / junit.xml there (handy in CI)
 //   ORANGE_TEST_KEEP=1        keep earlier runs' temp folders
 import * as esbuild from 'esbuild';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { createWriteStream, existsSync, lstatSync, mkdirSync, readdirSync, rmSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -20,6 +20,13 @@ const root = new URL('..', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '
 const electronExe = join(root, 'node_modules', 'electron', 'dist', 'electron.exe');
 const buildDir = join(root, 'tests', '.build');
 const bundle = join(buildDir, 'run.js');
+
+// A fresh `npm ci` can skip Electron's postinstall download (npm allow-scripts); fetch the binary once.
+if (!existsSync(electronExe)) {
+  console.log('Electron binary missing; downloading it…');
+  const r = spawnSync(process.execPath, [join(root, 'node_modules', 'electron', 'install.js')], { stdio: 'inherit' });
+  if (r.status !== 0) console.error('Electron download failed.');
+}
 
 for (const need of [electronExe, join(root, 'vendor', 'bin', 'ffmpeg.exe'), join(root, 'vendor', 'bin', '7z.exe')]) {
   if (!existsSync(need)) {
