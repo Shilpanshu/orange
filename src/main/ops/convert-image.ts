@@ -1,7 +1,7 @@
 // Image conversion. sharp (libvips) does the heavy lifting for speed; ImageMagick decodes what libvips can't
 // (HEIC, BMP, ICO, JXL); HEIC is written with libx265 via engines/heif; BMP and PDF are written here.
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { join, dirname, toNamespacedPath } from 'node:path';
 import { tmpdir } from 'node:os';
 import sharp from 'sharp';
 import type { Sharp, SharpOptions, Metadata } from 'sharp';
@@ -32,6 +32,9 @@ function quality(): number {
 
 const LIMITS = { limitInputPixels: 1_000_000_000, failOn: 'none' as const };
 
+/** libvips can't open paths past MAX_PATH (260) unless they carry the \\?\ prefix. */
+const longSafe = (p: string) => (p.length >= 240 ? toNamespacedPath(p) : p);
+
 // ------------------------------------------------------------------ decoding
 
 interface Source {
@@ -48,9 +51,15 @@ interface Source {
  */
 async function decodable(input: string, tmpDir: string, signal?: AbortSignal): Promise<Source> {
   const ext = extOf(input);
-  if (SHARP_IN.has(ext)) return { file: input, ext, original: true };
+  if (SHARP_IN.has(ext)) return { file: longSafe(input), ext, original: true };
   const out = join(tmpDir, 'decoded.png');
   if (existsSync(magickExe())) {
+    // ImageMagick expands %d, %x, %% and %[…] in file names ("photo %d.heic" → "photo 0.heic"), so give it a plain name.
+    if (input.includes('%')) {
+      const staged = join(tmpDir, `source.${ext}`);
+      copyFileSync(input, staged);
+      input = staged;
+    }
     let frame = '[0]';
     if (ext === 'ico' || ext === 'cur') frame = `[${await largestFrame(input, signal)}]`;
     // -auto-orient: honour EXIF orientation for formats where ImageMagick (not libheif) applies it.
@@ -111,15 +120,16 @@ export const converter: ConverterModule = {
       throw new UserError(`Can't convert images to ${target.toUpperCase()}.`);
     }
     ctx.progress(0.05);
-    const src = await decodable(input, ctx.tmp(), ctx.signal);
-    ctx.progress(0.25);
-    const out = ctx.out(input, t);
+    let out = '';
     try {
+      const src = await decodable(input, ctx.tmp(), ctx.signal);
+      ctx.progress(0.25);
+      out = ctx.out(input, t);
       await write(src, t, out, ctx);
     } catch (e: any) {
-      rmSync(out, { force: true });
+      if (out) rmSync(out, { force: true });
       if (ctx.signal.aborted) throw e;
-      if (/unsupported image format|Input file is missing|corrupt|premature end|bad seek/i.test(String(e?.message))) {
+      if (/unsupported image format|Input file is missing|corrupt|premature end|bad seek|insufficient image data|improper image header|no decode delegate|negative or zero image size/i.test(String(e?.message))) {
         throw new UserError("This image can't be read. It may be damaged or in an unusual format.");
       }
       throw e;
@@ -139,7 +149,7 @@ export async function toBrowserImage(input: string, out: string): Promise<void> 
       .resize({ width: 4096, height: 4096, fit: 'inside', withoutEnlargement: true })
       .toColourspace('srgb')
       .png({ compressionLevel: 3 })
-      .toFile(out);
+      .toFile(longSafe(out));
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
@@ -160,20 +170,20 @@ async function write(src: Source, t: string, out: string, ctx: Ctx) {
     case 'jpg':
       await keep(img.flatten({ background: WHITE }))
         .jpeg({ quality: q, mozjpeg: true, chromaSubsampling: q >= 90 ? '4:4:4' : '4:2:0' })
-        .toFile(out);
+        .toFile(longSafe(out));
       return;
     case 'png':
-      await keep(img).png({ compressionLevel: 6, adaptiveFiltering: true }).toFile(out);
+      await keep(img).png({ compressionLevel: 6, adaptiveFiltering: true }).toFile(longSafe(out));
       return;
     case 'webp':
-      await keep(img).webp({ quality: q, alphaQuality: 100, effort: 4, smartSubsample: true }).toFile(out);
+      await keep(img).webp({ quality: q, alphaQuality: 100, effort: 4, smartSubsample: true }).toFile(longSafe(out));
       return;
     case 'tiff':
-      await keep(img).tiff({ compression: 'lzw', predictor: 'horizontal' }).toFile(out);
+      await keep(img).tiff({ compression: 'lzw', predictor: 'horizontal' }).toFile(longSafe(out));
       return;
     case 'avif':
       // AVIF's quality scale runs lower than JPEG's for the same visual result.
-      await keep(img).avif({ quality: Math.max(30, Math.min(90, q - 25)), effort: 4, chromaSubsampling: q >= 95 ? '4:4:4' : '4:2:0' }).toFile(out);
+      await keep(img).avif({ quality: Math.max(30, Math.min(90, q - 25)), effort: 4, chromaSubsampling: q >= 95 ? '4:4:4' : '4:2:0' }).toFile(longSafe(out));
       return;
     case 'bmp':
       await writeBmp(img, out);

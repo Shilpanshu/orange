@@ -333,9 +333,29 @@ export async function editImage(paths: string[]) {
     return;
   }
 
+  // The GPU driver can drop the context (driver update, sleep, another app hogging the GPU).
+  // Without this the preview goes blank and Save fails with a misleading "too large" error:
+  // keep the context restorable and rebuild the textures and program when it comes back.
+  let lost = false;
+  canvas.addEventListener('webglcontextlost', (e) => {
+    e.preventDefault();
+    lost = true;
+    s.primary.disabled = true;
+  });
+  canvas.addEventListener('webglcontextrestored', () => {
+    try {
+      r = new Renderer(canvas, bmp, blurSrc);
+      lost = false;
+      s.primary.disabled = false;
+      draw();
+    } catch (e: any) {
+      s.status.textContent = e?.message ?? String(e);
+    }
+  });
+
   let values = zero();
   let before = false;
-  const draw = rafThrottle(() => r.preview(values, before));
+  const draw = rafThrottle(() => !lost && r.preview(values, before));
 
   const fit = () => {
     const rect = s.stage.getBoundingClientRect();
@@ -349,7 +369,7 @@ export async function editImage(paths: string[]) {
     const dpr = window.devicePixelRatio || 1;
     canvas.width = Math.min(bmp.width, Math.round(cw * dpr));
     canvas.height = Math.min(bmp.height, Math.round(ch * dpr));
-    r.preview(values, before);
+    if (!lost) r.preview(values, before);
   };
   new ResizeObserver(fit).observe(s.stage);
 
@@ -441,6 +461,7 @@ export async function editImage(paths: string[]) {
     try {
       // Give the button state a frame to paint before the heavy readback.
       await new Promise((res) => requestAnimationFrame(() => setTimeout(res, 0)));
+      if (lost) throw new Error('The graphics card was reset. Wait a moment, then save again.');
       const px = r.exportPixels(values);
       let out: OffscreenCanvas = new OffscreenCanvas(px.width, px.height);
       out.getContext('2d')!.putImageData(px, 0, 0);
@@ -451,7 +472,7 @@ export async function editImage(paths: string[]) {
       api().send('window:close');
     } catch (e: any) {
       s.status.textContent = e?.message ?? String(e);
-      s.primary.disabled = false;
+      s.primary.disabled = lost;
       s.primary.textContent = 'Save';
     }
   };

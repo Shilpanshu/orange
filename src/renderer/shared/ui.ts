@@ -47,6 +47,18 @@ document.addEventListener(
 );
 
 export const base = (p: string) => p.split(/[\\/]/).pop() ?? p;
+// A file dropped where the page doesn't take drops is ignored cleanly (no-drop cursor, nothing
+// happens). Pages that accept drops handle them on their own elements first and call
+// preventDefault, which this window-level fallback leaves alone.
+window.addEventListener('dragover', (e) => {
+  if (e.defaultPrevented) return;
+  e.preventDefault();
+  if (e.dataTransfer) e.dataTransfer.dropEffect = 'none';
+});
+window.addEventListener('drop', (e) => {
+  if (!e.defaultPrevented) e.preventDefault();
+});
+
 export const dir = (p: string) => p.replace(/[\\/][^\\/]*$/, '');
 export const extOf = (p: string) => (/\.([^.\\/]+)$/.exec(p)?.[1] ?? '').toLowerCase();
 export const fileUrl = (p: string) => 'file:///' + p.replace(/\\/g, '/').split('/').map(encodeURIComponent).join('/').replace(/^([A-Za-z])%3A/, '$1:');
@@ -170,9 +182,13 @@ export function numberInput(value: number, onChange: (v: number) => void, opts: 
   input.addEventListener('change', () => {
     let v = Number(input.value);
     if (!Number.isFinite(v)) v = value;
+    // Without an explicit step the value is a count or a pixel size: "2.5 parts" or a
+    // 1080.4 px width would reach the tool as a fraction.
+    if (opts.step === undefined) v = Math.round(v);
     if (opts.min !== undefined) v = Math.max(opts.min, v);
     if (opts.max !== undefined) v = Math.min(opts.max, v);
     input.value = String(v);
+    value = v; // a cleared or invalid entry falls back to the last good value, not the first
     onChange(v);
   });
   return input;

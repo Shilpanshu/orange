@@ -26,6 +26,18 @@ Orange updates itself from GitHub Releases. New versions download in the backgro
 
 Requires Windows 10 or 11, 64-bit. The installer is about 250 MB and Orange takes about 740 MB on disk. AI models download separately, the first time you use each AI tool.
 
+## What's new in 1.2.1
+
+A reliability release: a full review of the app fixed 75 bugs, and the automated test suite grew to 171 cases. Highlights:
+
+- **No more surprise wheels.** Ctrl+drag (copy), Shift+drag (move) and right-button drags in Explorer no longer open the wheel.
+- **Nothing overwritten.** Two files with the same name in one batch (for example `IMG_1.HEIC` and `IMG_1.JPG` to WebP) now get separate outputs.
+- **Fast PDF thumbnails.** Merge, Split and Organize show the first pages in about a second, even for 600-page or 200 MB files, using a fraction of the memory.
+- **Tricky files work:** surround-sound films to Opus/WebM, 10-bit video to MP4, very large photos to HEIC, `%` or `'` in file and folder names, and paths longer than 260 characters.
+- **Cancel cleans up.** Cancelling a video, PDF or archive job no longer leaves half-written files.
+- **Clearer messages** instead of raw tool output, and a readable wheel even with 20+ tools and presets.
+- **Safer:** a dropped file can no longer replace an Orange window, settings are saved atomically, and Undo for Rename and Move always targets the right files.
+
 ## What's new in 1.2
 
 - **New tools:** OCR, Remove background, Upscale, Subtitles from speech, bulk Rename, Protect and Unlock.

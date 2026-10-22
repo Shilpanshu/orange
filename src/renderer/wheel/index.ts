@@ -67,15 +67,20 @@ function render(swap = false) {
   ring.innerHTML = svg;
 
   const dense = n > 8;
+  // Past 12 slices one ring of labels no longer fits side by side (the image Tools wheel plus
+  // presets easily reaches 15–20), so neighbouring labels alternate between an outer and an
+  // inner ring and use a compact style.
+  const crowded = n > 12;
   labels.innerHTML = items
     .map((it, i) => {
       const a = (i / n) * Math.PI * 2;
-      const p = polar((R_OUT + R_IN) / 2 + 2, a);
+      const r = crowded ? (i % 2 ? R_IN + 36 : R_OUT - 34) : (R_OUT + R_IN) / 2 + 2;
+      const p = polar(r, a);
       const body = it.icon
         ? `<span class="ic">${icon(it.icon, 20)}</span><span class="txt">${esc(it.label)}</span>`
         : `<span class="fmt">${esc(it.label)}</span>${it.sub ? `<span class="cap">${esc(it.sub)}</span>` : ''}`;
       const marks = `${it.pinned ? `<span class="pin" title="Pinned">${icon('star', 10, 2)}</span>` : ''}${it.recent ? '<span class="recent" title="Last used"></span>' : ''}`;
-      return `<div class="label${dense ? ' dense' : ''}${it.pinned ? ' pinned' : ''}" data-i="${i}" style="left:${p.x}px;top:${p.y}px">${marks}${body}</div>`;
+      return `<div class="label${dense ? ' dense' : ''}${crowded ? ' crowded' : ''}${it.pinned ? ' pinned' : ''}" data-i="${i}" style="left:${p.x}px;top:${p.y}px">${marks}${body}</div>`;
     })
     .join('');
 
@@ -274,7 +279,9 @@ window.addEventListener('drop', (e) => {
   const files = Array.from(e.dataTransfer?.files ?? []);
   const paths = files.map((f) => orange.pathForFile(f)).filter(Boolean);
   let i = segmentAt(e.clientX, e.clientY);
-  if (i < 0) i = picked; // dropped on the centre: arrow-key choice or last time's choice
+  // Dropped on the centre: arrow-key choice or last time's choice. A drop outside the ring (the
+  // window's transparent corners) is a cancel, as in click mode.
+  if (i < 0 && Math.hypot(e.clientX - C, e.clientY - C) < R_IN) i = picked;
   if (i < 0 || !paths.length) return orange.send('wheel:dismiss');
   // The real file names may disagree with the MIME guess; the main process re-validates.
   choose(i, paths);

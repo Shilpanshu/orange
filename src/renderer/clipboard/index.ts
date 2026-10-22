@@ -4,6 +4,13 @@ import { icon } from '../shared/icons';
 
 declare const orange: import('../../preload/preload').OrangeApi;
 
+// This window takes no drops: show the no-drop cursor and ignore a dropped file.
+window.addEventListener('dragover', (e) => {
+  e.preventDefault();
+  if (e.dataTransfer) e.dataTransfer.dropEffect = 'none';
+});
+window.addEventListener('drop', (e) => e.preventDefault());
+
 interface ClipContent {
   kind: 'image' | 'files' | 'text' | 'empty';
   thumb?: string;
@@ -74,6 +81,7 @@ function preview(c: ClipContent): string {
 let buttons: HTMLButtonElement[] = [];
 
 function render(c: ClipContent) {
+  pickedOnce = false;
   const choices = CHOICES[c.kind];
   const where = c.kind === 'files' ? '' : `Saves to ${esc(folderLabel(c.saveTo))}`;
   root.innerHTML = `
@@ -101,7 +109,11 @@ function render(c: ClipContent) {
   });
 }
 
+// One pick per showing: a double-click or a held Enter must not save the clipboard twice.
+let pickedOnce = false;
 function pick(id: string) {
+  if (pickedOnce) return;
+  pickedOnce = true;
   orange.send('clip:action', id);
 }
 

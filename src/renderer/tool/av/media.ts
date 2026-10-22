@@ -521,9 +521,11 @@ export function timeField(value: number, onCommit: (v: number) => void, opts: { 
       return;
     }
     const c = clamp(v, 0, opts.max ?? Infinity);
-    input.value = fmtTime(c);
     cur = c;
     onCommit(c);
+    // The page may adjust the value (e.g. an In point past the Out point): show what it kept,
+    // which show() skips while the field has focus.
+    input.value = fmtTime(cur);
   };
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') {

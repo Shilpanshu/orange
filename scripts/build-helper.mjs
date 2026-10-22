@@ -2,8 +2,10 @@
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const root = new URL('..', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1');
+// fileURLToPath, not URL.pathname: the latter keeps %20 for a checkout under a folder with spaces.
+const root = fileURLToPath(new URL('..', import.meta.url));
 const fw = join(process.env.WINDIR ?? 'C:\\Windows', 'Microsoft.NET', 'Framework64', 'v4.0.30319');
 const csc = join(fw, 'csc.exe');
 if (!existsSync(csc)) throw new Error(`csc.exe not found at ${csc}`);

@@ -4,9 +4,10 @@ import * as esbuild from 'esbuild';
 import { cpSync, mkdirSync, readdirSync, existsSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { copyImageAssets } from './build-assets-image.mjs';
+import { fileURLToPath } from 'node:url';
 
 const watch = process.argv.includes('--watch');
-const root = new URL('..', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1');
+const root = fileURLToPath(new URL('..', import.meta.url)).replace(/[\\/]$/, '');
 const out = join(root, 'dist');
 mkdirSync(out, { recursive: true });
 
@@ -66,6 +67,11 @@ function copyStatic() {
     mkdirSync(join(out, 'vendor/pdfjs'), { recursive: true });
     for (const f of ['pdf.min.mjs', 'pdf.worker.min.mjs']) {
       if (existsSync(join(pdfjs, f))) cpSync(join(pdfjs, f), join(out, 'vendor/pdfjs', f));
+    }
+    // Standard fonts (for PDFs that don't embed them) and the JPEG 2000 / colour wasm decoders.
+    for (const d of ['standard_fonts', 'wasm']) {
+      const src = join(pdfjs, '..', d);
+      if (existsSync(src)) cpSync(src, join(out, 'vendor/pdfjs', d), { recursive: true });
     }
   }
 }

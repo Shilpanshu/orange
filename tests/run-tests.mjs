@@ -15,8 +15,9 @@ import { spawn, spawnSync } from 'node:child_process';
 import { createWriteStream, existsSync, lstatSync, mkdirSync, readdirSync, rmSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const root = new URL('..', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1').replace(/\/$/, '');
+const root = fileURLToPath(new URL('..', import.meta.url)).replace(/[\\/]$/, '');
 const electronExe = join(root, 'node_modules', 'electron', 'dist', 'electron.exe');
 const buildDir = join(root, 'tests', '.build');
 const bundle = join(buildDir, 'run.js');

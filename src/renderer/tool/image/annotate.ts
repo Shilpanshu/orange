@@ -5,7 +5,7 @@ import { api, base, checkbox, h, saveBytes, section, shell, slider } from '../..
 import { icon } from '../../shared/icons';
 import {
   FitView, HANDLE_CURSOR, History, canvasBytes, clamp, colorPicker, cssVar, defaultFormat, dims, dragRect, drawHandles, flatten,
-  formatSection, hitHandle, isTyping, loadBitmap, normRect, rafThrottle, stageCanvas, toolButton, undoKeys, xicon,
+  formatSection, hitHandle, ownsKeys, loadBitmap, normRect, rafThrottle, stageCanvas, toolButton, undoKeys, xicon,
   type Handle, type Rect,
   capture,
 } from './common';
@@ -355,6 +355,13 @@ export async function annotateImage(paths: string[]) {
     hist.push(state);
     syncBar();
   };
+  let commitTimer = 0;
+  function flushNudge() {
+    if (!commitTimer) return;
+    clearTimeout(commitTimer);
+    commitTimer = 0;
+    commit();
+  }
   const restore = (st: State | null) => {
     if (!st) return;
     state = st;
@@ -363,10 +370,11 @@ export async function annotateImage(paths: string[]) {
     syncPanel();
     draw();
   };
-  undoKeys(
-    () => restore(hist.undo()),
-    () => restore(hist.redo()),
-  );
+  // A pending arrow-key nudge is committed first, so Undo takes back the nudge rather than the
+  // step before it.
+  const undo = () => (flushNudge(), restore(hist.undo()));
+  const redo = () => (flushNudge(), restore(hist.redo()));
+  undoKeys(undo, redo);
 
   // ------------------------------------------------------------ pointer
   type Drag = { move?: (x: number, y: number, e: PointerEvent) => void; up?: () => void };
@@ -686,8 +694,8 @@ export async function annotateImage(paths: string[]) {
     bar.append(b);
     if (t.kind === 'select' || t.kind === 'highlight') bar.append(h('span', { class: 'sep' }));
   }
-  const undoBtn = toolButton(icon('undo', 18), 'Undo (Ctrl+Z)', () => restore(hist.undo()));
-  const redoBtn = toolButton(icon('redo', 18), 'Redo (Ctrl+Shift+Z)', () => restore(hist.redo()));
+  const undoBtn = toolButton(icon('undo', 18), 'Undo (Ctrl+Z)', undo);
+  const redoBtn = toolButton(icon('redo', 18), 'Redo (Ctrl+Shift+Z)', redo);
   const delBtn = toolButton(icon('trash', 18), 'Delete selected (Del)', removeSelected);
   bar.append(h('span', { class: 'spacer' }), undoBtn, redoBtn, delBtn);
   s.main.before(bar);
@@ -741,7 +749,7 @@ export async function annotateImage(paths: string[]) {
   }
 
   window.addEventListener('keydown', (e) => {
-    if (isTyping(e) || e.ctrlKey || e.altKey || e.metaKey) return;
+    if (ownsKeys(e) || e.ctrlKey || e.altKey || e.metaKey) return;
     if (e.key === 'Delete' || e.key === 'Backspace') {
       e.preventDefault();
       removeSelected();
@@ -764,10 +772,9 @@ export async function annotateImage(paths: string[]) {
     const t = TOOLS.find((x) => x.key === e.key.toLowerCase());
     if (t) setTool(t.kind);
   });
-  let commitTimer = 0;
   const commitSoon = () => {
     clearTimeout(commitTimer);
-    commitTimer = window.setTimeout(commit, 400);
+    commitTimer = window.setTimeout(flushNudge, 400);
   };
 
   // ------------------------------------------------------------ panel

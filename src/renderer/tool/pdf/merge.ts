@@ -1,7 +1,7 @@
 // Merge PDFs: a reorderable list with a first-page preview and page count per file.
 import { api, base, dir, fmtBytes, h, iconButton, shell } from '../../shared/ui';
 import { icon } from '../../shared/icons';
-import { thumb, fitRotated, pdfBlurb } from './thumbs';
+import { fitRotated, pdfBlurb, createThumbLoader, inspectPdf, closeDoc } from './thumbs';
 
 interface Entry {
   path: string;
@@ -28,17 +28,35 @@ export async function mergePdf(paths: string[]) {
     list,
   );
 
-  const inspect = (e: Entry) =>
-    Promise.all([
-      api().invoke<{ pages: number; encrypted: boolean; error?: string }>('pdf:inspect', e.path),
-      api().invoke<{ size: number }>('file:stat', e.path).catch(() => ({ size: 0 })),
-    ]).then(([info, st]) => {
-      e.pages = info.pages;
-      e.size = st.size;
-      if (info.encrypted) e.problem = 'Password-protected. Remove the protection to merge it.';
-      else if (info.error) e.problem = "Couldn't read this PDF.";
-      render();
-    });
+  const thumbs = createThumbLoader({ root: s.full, side: () => 56, fit: (_box, img, aspect) => fitRotated(img, aspect, 0, 44, 56) });
+
+  // Page counts are read a few files at a time (pdf.js reads only the bytes it needs), so a long
+  // list doesn't load every file at once.
+  const waiting: Entry[] = [];
+  let reading = 0;
+  const inspect = (e: Entry) => {
+    waiting.push(e);
+    pumpInspect();
+  };
+  function pumpInspect() {
+    while (reading < 4 && waiting.length) {
+      const e = waiting.shift()!;
+      if (!entries.includes(e)) continue;
+      reading++;
+      Promise.all([inspectPdf(e.path), api().invoke<{ size: number }>('file:stat', e.path).catch(() => ({ size: 0 }))])
+        .then(([info, st]) => {
+          e.pages = info.pages;
+          e.size = st.size;
+          if (info.encrypted) e.problem = 'Password-protected. Remove the protection to merge it.';
+          else if (info.error) e.problem = "Couldn't read this PDF.";
+        })
+        .finally(() => {
+          reading--;
+          render();
+          pumpInspect();
+        });
+    }
+  }
 
   let dragFrom = -1;
   const rows = new Map<Entry, { item: HTMLElement; index: HTMLElement; meta: HTMLElement; state: string }>();
@@ -66,16 +84,7 @@ export async function mergePdf(paths: string[]) {
     const at = () => entries.indexOf(e);
     const img = h('img', { alt: '', draggable: false });
     const box = h('div', { class: 'pf-mini skeleton' }, img);
-    if (!e.problem) {
-      thumb(e.path, 0, 88).then(
-        (t) => {
-          img.src = t.url;
-          fitRotated(img, t.aspect, 0, 44, 56);
-          box.classList.remove('skeleton');
-        },
-        () => box.classList.remove('skeleton'),
-      );
-    } else box.classList.remove('skeleton');
+    thumbs.watch(box, e.path, 0);
 
     const meta = metaFor(e);
     const index = h('span', { class: 'pf-index' }, String(at() + 1));
@@ -104,6 +113,8 @@ export async function mergePdf(paths: string[]) {
       iconButton('close', 'Remove from the list', () => {
         entries.splice(at(), 1);
         rows.delete(e);
+        thumbs.unwatch(box);
+        if (!entries.some((x) => x.path === e.path)) closeDoc(e.path);
         render();
       }),
     );
@@ -145,15 +156,21 @@ export async function mergePdf(paths: string[]) {
   }
 
   function render() {
-    list.replaceChildren(...entries.map(row));
+    const els = entries.map(row);
+    // Re-attach only when the order changed: moving a row would drop its focus or cancel a drag.
+    const same = els.length === list.children.length && els.every((el, i) => list.children[i] === el);
+    if (!same) list.replaceChildren(...els);
     const ok = entries.filter((e) => !e.problem);
     const pages = ok.reduce((a, e) => a + (e.pages ?? 0), 0);
     const bad = entries.length - ok.length;
-    s.primary.disabled = ok.length < 2 || bad > 0;
+    const unread = entries.filter((e) => e.pages === undefined && !e.problem).length;
+    s.primary.disabled = ok.length < 2 || bad > 0 || unread > 0;
     if (!entries.length) list.append(h('p', { class: 'empty-state pf-empty' }, 'No PDFs in the list. Add some to merge.'));
     s.status.textContent = bad
-      ? `Remove ${bad === 1 ? 'the protected file' : `the ${bad} protected files`} to continue`
-      : ok.length < 2
+      ? `Remove ${bad === 1 ? 'the file that can’t be merged' : `the ${bad} files that can’t be merged`} to continue`
+      : unread && ok.length >= 2
+        ? `Reading ${unread} file${unread === 1 ? '' : 's'}…`
+        : ok.length < 2
         ? 'Add at least two PDFs'
         : `${ok.length} files · ${pdfBlurb(pages)} → Merged.pdf in ${base(dir(ok[0].path)) || dir(ok[0].path)}`;
   }

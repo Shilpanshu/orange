@@ -183,23 +183,35 @@ function fsReason(e: any): string {
   return String(e?.message ?? e);
 }
 
-let lastRename: { steps: Step[]; at: number } | null = null;
+/**
+ * Renames that can still be undone, newest last. Several Rename jobs can finish close together and
+ * each HUD keeps its own Undo button, so one job's Undo must not put back another job's names.
+ */
+const renameHistory: { steps: Step[]; at: number }[] = [];
 
 const renameTool: ToolFn = async (_inputs, ctx) => {
   const opts = (ctx.options ?? {}) as RenameOptions;
   const steps = planRename(opts.pairs ?? []);
   await applyRenames(steps, (f) => ctx.progress(f));
-  lastRename = { steps, at: Date.now() };
+  renameHistory.push({ steps, at: Date.now() });
+  if (renameHistory.length > 20) renameHistory.shift();
   return steps.map((s) => s.to);
 };
 
 /** Paths the last rename produced (empty when there is nothing to undo). */
 export function lastRenamedPaths(): string[] {
-  return lastRename ? lastRename.steps.map((s) => s.to) : [];
+  const last = renameHistory[renameHistory.length - 1];
+  return last ? last.steps.map((s) => s.to) : [];
 }
 
-/** Put the names from the last Rename back. Shows the outcome in the HUD and returns it. */
-export async function undoLastRename(): Promise<{ ok: boolean; message: string; paths: string[] }> {
+/**
+ * Put the names from a Rename back: the one that produced `paths` (a job's outputs), or the latest.
+ * Shows the outcome in the HUD and returns it.
+ */
+export async function undoLastRename(paths?: string[]): Promise<{ ok: boolean; message: string; paths: string[] }> {
+  const key = (ps: string[]) => ps.map(lower).sort().join('|');
+  const i = paths?.length ? renameHistory.findIndex((r) => key(r.steps.map((s) => s.to)) === key(paths)) : renameHistory.length - 1;
+  const lastRename = i >= 0 ? renameHistory[i] : null;
   if (!lastRename) {
     hud.notice('Nothing to undo.');
     return { ok: false, message: 'Nothing to undo.', paths: [] };
@@ -210,7 +222,7 @@ export async function undoLastRename(): Promise<{ ok: boolean; message: string; 
     if (missing) throw new UserError(`${basename(missing.from)} was moved or renamed since, so the names can't be restored.`);
     const steps = planRename(back);
     await applyRenames(steps);
-    lastRename = null;
+    renameHistory.splice(renameHistory.indexOf(lastRename), 1);
     const message = steps.length === 1 ? `Renamed back to ${basename(steps[0].to)}` : `Restored ${steps.length} original names`;
     hud.notice(message);
     return { ok: true, message, paths: steps.map((s) => s.to) };
@@ -550,22 +562,29 @@ const protect: ToolFn = async (inputs, ctx) => {
     if (o.ownerPassword && o.ownerPassword === password && restricted) {
       throw new UserError('Use a different password for permissions, or leave it empty.');
     }
-    for (let i = 0; i < pdfs.length; i++) {
-      if (ctx.signal.aborted) throw new Error('Cancelled');
-      const src = pdfs[i];
-      ctx.progress(i / pdfs.length, basename(src));
-      const bytes = await readFile(src);
-      let out: Uint8Array;
-      try {
-        out = await encryptPdf(bytes, password, owner, perms);
-      } catch (e: any) {
-        if (e instanceof UserError) throw new UserError(`${basename(src)}: ${e.message}`);
-        log('pdf encrypt failed', e?.message);
-        throw new UserError(`${basename(src)} couldn't be read as a PDF.`);
+    try {
+      for (let i = 0; i < pdfs.length; i++) {
+        if (ctx.signal.aborted) throw new Error('Cancelled');
+        const src = pdfs[i];
+        ctx.progress(i / pdfs.length, basename(src));
+        const bytes = await readFile(src);
+        let out: Uint8Array;
+        try {
+          out = await encryptPdf(bytes, password, owner, perms);
+        } catch (e: any) {
+          if (e instanceof UserError) throw new UserError(`${basename(src)}: ${e.message}`);
+          log('pdf encrypt failed', e?.message);
+          throw new UserError(`${basename(src)} couldn't be read as a PDF.`);
+        }
+        const dest = ctx.out(src, 'pdf', ' protected');
+        outputs.push(dest);
+        await writeFile(dest, out);
       }
-      const dest = ctx.out(src, 'pdf', ' protected');
-      await writeFile(dest, out);
-      outputs.push(dest);
+    } catch (e) {
+      // All or nothing: a failed run reports no outputs, so copies made so far would be left
+      // behind where Undo can't reach them (and the user might think every file got protected).
+      await Promise.all(outputs.map((p) => rm(p, { force: true })));
+      throw e;
     }
     ctx.progress(1);
     return outputs;
@@ -577,6 +596,13 @@ const protect: ToolFn = async (inputs, ctx) => {
   const ext = mode === '7z' ? '7z' : 'zip';
   const problem = archivePasswordProblem(password, ext);
   if (problem) throw new UserError(problem);
+  // 7-Zip stores each item under its own name and refuses two with the same one (from different folders).
+  const names = new Set<string>();
+  for (const p of inputs) {
+    const n = basename(p).toLowerCase();
+    if (names.has(n)) throw new UserError(`Two of these items are named "${basename(p)}". Rename one of them first, or protect them separately.`);
+    names.add(n);
+  }
   const out = ctx.out(join(dirname(inputs[0]), `${packName(inputs)}.x`), ext);
   const type = mode === '7z' ? ['-t7z', '-mx=5', '-mhe=on'] : ['-tzip', '-mx=5', '-mem=AES256', '-mcu=on'];
   try {

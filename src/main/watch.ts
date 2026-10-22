@@ -287,6 +287,8 @@ export class WatchService {
 
   private async process(w: FolderWatch, full: string) {
     const wf = w.wf;
+    // The watch was removed (or moved to another folder) while this file waited in the queue.
+    if (this.watches.get(wf.id) !== w) return;
     if (!existsSync(full) || this.isOwn(full)) return;
     // Settings may have changed while the file settled.
     if (!wf.enabled || !actionAllowed(wf.action)) return;

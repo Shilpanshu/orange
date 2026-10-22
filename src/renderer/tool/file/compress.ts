@@ -46,6 +46,7 @@ export async function compress(paths: string[]) {
   const estimates = new Map<string, number>(); // bytes; -1 = can't estimate
   let infos: Info[] = [];
   let done = false;
+  let running = false; // an estimate landing mid-run must not re-enable Compress
   const rowsUsed = new Set<string>(); // outputs already matched to a row
 
   // skeleton while probing
@@ -278,7 +279,7 @@ export async function compress(paths: string[]) {
   }
 
   function refresh() {
-    if (done) return;
+    if (done || running) return;
     let before = 0;
     let after = 0;
     let unknown = 0;
@@ -342,7 +343,8 @@ export async function compress(paths: string[]) {
 
   // --------------------------------------------------------------- run
   s.primary.addEventListener('click', async () => {
-    if (done) return;
+    if (done || running) return;
+    running = true;
     s.primary.disabled = true;
     s.primary.textContent = 'Compressing…';
     s.status.textContent = 'Working. Progress shows in the corner; you can close this window.';
@@ -352,6 +354,7 @@ export async function compress(paths: string[]) {
       done = true;
       await showResults(outputs, Date.now() - t0);
     } catch (e: any) {
+      running = false;
       s.primary.disabled = false;
       s.primary.textContent = 'Compress';
       s.status.textContent = e?.message ?? String(e);

@@ -36,6 +36,9 @@ export interface DragWatcherEvents {
 
 export class DragWatcher extends EventEmitter {
   private down = false;
+  // A left press we saw ourselves. Without it, `down` came from a drag event, which libuiohook
+  // also sends for right- and middle-button drags.
+  private leftDown = false;
   private dragging = false;
   private origin = { x: 0, y: 0 };
   private heldMods = new Set<number>();
@@ -50,6 +53,7 @@ export class DragWatcher extends EventEmitter {
     uIOhook.on('mousedown', (e) => {
       if (e.button !== 1) return;
       this.down = true;
+      this.leftDown = true;
       this.dragging = false;
       this.origin = { x: e.x, y: e.y };
     });
@@ -68,9 +72,11 @@ export class DragWatcher extends EventEmitter {
       if (!this.dragging && Math.abs(e.x - this.origin.x) + Math.abs(e.y - this.origin.y) > DRAG_THRESHOLD) this.beginDrag();
     });
     uIOhook.on('mouseup', (e) => {
-      if (e.button !== 1) return;
+      // Another button released during a left drag doesn't end it; ending a right/middle drag does.
+      if (e.button !== 1 && this.leftDown) return;
       const was = this.dragging;
       this.down = false;
+      this.leftDown = false;
       this.dragging = false;
       if (was) this.emit('release');
     });
@@ -79,13 +85,14 @@ export class DragWatcher extends EventEmitter {
         this.emit('nav', NAV[e.keycode]);
         return;
       }
-      if (!this.dragging) return;
       for (const [mod, codes] of Object.entries(MOD_CODES)) {
         if (codes.includes(e.keycode)) {
-          // Auto-repeat sends keydown continuously while held; react only once per press.
+          // Auto-repeat sends keydown continuously while held; react only once per press. Track
+          // presses outside drags too, so a key held since before the drag (Ctrl+drag to copy,
+          // Shift+drag to move) is not taken for a tap when its repeats arrive mid-drag.
           if (this.heldMods.has(e.keycode)) return;
           this.heldMods.add(e.keycode);
-          this.emit('modifier', mod as Exclude<ModKey, 'none'>);
+          if (this.dragging) this.emit('modifier', mod as Exclude<ModKey, 'none'>);
           return;
         }
       }

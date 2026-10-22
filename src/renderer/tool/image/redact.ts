@@ -5,7 +5,7 @@ import { api, base, h, saveBytes, section, segmented, shell, slider } from '../.
 import { icon } from '../../shared/icons';
 import {
   FitView, HANDLE_CURSOR, History, canvasBytes, clamp, colorPicker, cssVar, defaultFormat, dims, dragRect, drawHandles, flatten,
-  formatSection, hitHandle, isTyping, loadBitmap, rafThrottle, stageCanvas, toolButton, undoKeys, xicon, type Handle, type Rect,
+  formatSection, hitHandle, ownsKeys, loadBitmap, rafThrottle, stageCanvas, toolButton, undoKeys, xicon, type Handle, type Rect,
   capture,
 } from './common';
 
@@ -91,6 +91,7 @@ export async function redactImage(paths: string[]) {
   const smallK = small.width / W;
 
   let state: State = { boxes: [], next: 1 };
+  let nudgeT = 0;
   let selected: number | null = null;
   const defaults = { style: 'blur' as Style, color: '#000000', strength: 60 };
 
@@ -139,8 +140,16 @@ export async function redactImage(paths: string[]) {
     if (!state.boxes.some((b) => b.id === selected)) selected = null;
     syncAll();
   };
-  const undo = () => restore(hist.undo());
-  const redo = () => restore(hist.redo());
+  // A pending arrow-key nudge is committed first, so Undo takes back the nudge rather than the
+  // step before it.
+  const flushNudge = () => {
+    if (!nudgeT) return;
+    clearTimeout(nudgeT);
+    nudgeT = 0;
+    commit();
+  };
+  const undo = () => (flushNudge(), restore(hist.undo()));
+  const redo = () => (flushNudge(), restore(hist.redo()));
   undoKeys(undo, redo);
 
   const sel = () => state.boxes.find((b) => b.id === selected) ?? null;
@@ -235,7 +244,7 @@ export async function redactImage(paths: string[]) {
     canvas.style.cursor = hit ? HANDLE_CURSOR[hit.hd] : 'crosshair';
   });
   window.addEventListener('keydown', (e) => {
-    if (isTyping(e) || e.ctrlKey) return;
+    if (ownsKeys(e) || e.ctrlKey) return;
     if (e.key === 'Delete' || e.key === 'Backspace') {
       e.preventDefault();
       remove(selected);
@@ -248,10 +257,9 @@ export async function redactImage(paths: string[]) {
       b.y = clamp(b.y + (e.key === 'ArrowUp' ? -st : e.key === 'ArrowDown' ? st : 0), 0, H - b.h);
       draw();
       clearTimeout(nudgeT);
-      nudgeT = window.setTimeout(commit, 400);
+      nudgeT = window.setTimeout(flushNudge, 400);
     }
   });
-  let nudgeT = 0;
 
   // ------------------------------------------------------------ detection
   const progress = h('div', { class: 'ix-progress', hidden: true }, h('div'));

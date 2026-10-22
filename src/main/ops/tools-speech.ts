@@ -553,8 +553,9 @@ async function writeOutputs(input: string, cues: Cue[], o: SpeechOptions, langua
     writeFileSync(srt, toSrt(cues), 'utf8');
     const ext = videoOutExt(input);
     const out = ctx.out(input, ext, ' subtitled');
-    // Filter-graph escaping for a Windows path: forward slashes, escaped drive colon, quoted.
-    const p = srt.replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "\\'");
+    // ffmpeg runs in the temp folder and the filter names the file relatively: a full path would need
+    // filter-graph escaping, and an apostrophe in it (C:\Users\O'Neil\...) can't be escaped inside quotes.
+    const p = 'subs.srt';
     const style =
       o.style === 'box'
         ? 'FontName=Segoe UI Semibold,FontSize=15,PrimaryColour=&H00FFFFFF,OutlineColour=&H59000000,BackColour=&H59000000,BorderStyle=4,Outline=4,Shadow=0,MarginV=22'
@@ -565,6 +566,7 @@ async function writeOutputs(input: string, cues: Cue[], o: SpeechOptions, langua
       duration: info.duration,
       range,
       note: 'Burning in subtitles',
+      cwd: tmp,
     });
     return [out];
   }

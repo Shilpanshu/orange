@@ -1,5 +1,5 @@
 import { app } from 'electron';
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, renameSync, copyFileSync, rmSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { EventEmitter } from 'node:events';
 
@@ -95,7 +95,15 @@ class Store extends EventEmitter {
     try {
       const raw = JSON.parse(readFileSync(this.file, 'utf8'));
       this.data = { ...DEFAULTS, ...raw, keys: { ...DEFAULTS.keys, ...raw.keys }, output: { ...DEFAULTS.output, ...raw.output } };
-    } catch {
+    } catch (e: any) {
+      // Keep a damaged file for the problem report; the next save would overwrite it.
+      if (e?.code !== 'ENOENT') {
+        try {
+          copyFileSync(this.file, this.file.replace(/\.json$/, '.corrupt.json'));
+        } catch {
+          /* unreadable as well */
+        }
+      }
       this.data = structuredClone(DEFAULTS);
     }
     return this.data;
@@ -108,7 +116,18 @@ class Store extends EventEmitter {
   set(patch: Partial<Settings>) {
     this.data = { ...this.data, ...patch };
     mkdirSync(dirname(this.file), { recursive: true });
-    writeFileSync(this.file, JSON.stringify(this.data, null, 2));
+    // Write a sibling and swap it in, so a crash or power cut mid-write never leaves a truncated file
+    // (which would silently reset every setting on the next start).
+    const tmp = `${this.file}.tmp`;
+    const json = JSON.stringify(this.data, null, 2);
+    writeFileSync(tmp, json);
+    try {
+      renameSync(tmp, this.file);
+    } catch {
+      // Another program (antivirus, a backup tool) has the file open: fall back to writing in place.
+      writeFileSync(this.file, json);
+      rmSync(tmp, { force: true });
+    }
     this.emit('change', this.data);
   }
 }

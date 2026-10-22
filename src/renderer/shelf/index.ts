@@ -122,6 +122,7 @@ function render() {
   const live = new Set(items.map((i) => i.path));
   for (const k of [...rows.keys()]) if (!live.has(k)) rows.delete(k);
   for (const k of [...selected]) if (!live.has(k)) selected.delete(k);
+  if (anchor && !live.has(anchor)) anchor = null;
   const els = items.map(row);
   if (!(els.length === list.children.length && els.every((e, i) => list.children[i] === e))) list.replaceChildren(...els);
   if (!items.length) list.append(h('div', { class: 'empty' }, h('span', { html: icon('float', 26) }), h('span', {}, 'Drop files here to keep them handy.')));
@@ -162,8 +163,8 @@ list.addEventListener('click', (e) => {
     return render();
   }
   const p = el.dataset.path!;
-  if (e.shiftKey && anchor) {
-    const a = items.findIndex((i) => i.path === anchor);
+  const a = anchor ? items.findIndex((i) => i.path === anchor) : -1;
+  if (e.shiftKey && a >= 0) {
     const b = items.findIndex((i) => i.path === p);
     if (!e.ctrlKey) selected.clear();
     for (let i = Math.min(a, b); i <= Math.max(a, b); i++) selected.add(items[i].path);

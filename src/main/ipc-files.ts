@@ -1,7 +1,7 @@
 // File IPC used by tool windows: saving renderer-produced bytes and previewing any image format.
 import { ipcMain } from 'electron';
 import { writeFileSync, statSync, mkdtempSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
 import { makeCtx } from './jobs';
@@ -13,13 +13,24 @@ import { hud } from './hud';
 const NATIVE = new Set(['jpg', 'jpeg', 'jfif', 'png', 'webp', 'gif', 'bmp', 'svg', 'avif', 'ico']);
 const previewCache = new Map<string, { mtime: number; url: string }>();
 let previewDir = '';
+// What renderer tools export (see OutFormat in renderer/tool/image/common.ts).
+const SAVE_EXTS = new Set(['jpg', 'jpeg', 'png', 'webp']);
 
 export function registerFileIpc() {
   ipcMain.handle('file:saveBytes', (_e, source: string, ext: string, suffix: string, bytes: Uint8Array) => {
-    const { ctx } = makeCtx(new AbortController().signal, () => {});
+    // The name is built from these, so a path separator or an unexpected extension could write
+    // (say, a script into the Startup folder) anywhere. The tool pages only export images.
+    if (!SAVE_EXTS.has(String(ext).toLowerCase()) || typeof suffix !== 'string' || /[\\/:*?"<>|]/.test(suffix)) {
+      throw new Error('Unsupported output name.');
+    }
+    const { ctx, cleanup } = makeCtx(new AbortController().signal, () => {});
     const out = ctx.out(source, ext, suffix);
-    writeFileSync(out, Buffer.from(bytes));
-    const job = hud.start(`Saved ${out.split(/[\/]/).pop()}`, 1, () => {});
+    try {
+      writeFileSync(out, Buffer.from(bytes));
+    } finally {
+      cleanup();
+    }
+    const job = hud.start(`Saved ${basename(out)}`, 1, () => {});
     job.done([out]);
     return out;
   });

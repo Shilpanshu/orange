@@ -2,6 +2,7 @@
 // page surgery; the windows render thumbnails themselves with pdf.js.
 import { ipcMain } from 'electron';
 import { readFile, writeFile } from 'node:fs/promises';
+import { open as openFile } from 'node:fs/promises';
 import { basename, dirname, extname, join } from 'node:path';
 import { PDFDocument, degrees } from 'pdf-lib';
 import type { Ctx, ToolFn } from './types';
@@ -85,6 +86,8 @@ const organizePdf: ToolFn = async (inputs, ctx) => {
     out.addPage(page);
     if (i % 10 === 0) ctx.progress(i / pages.length);
   }
+  // pdf-lib saves an empty document with a blank page added; that isn't what was asked for.
+  if (!out.getPageCount()) throw new UserError('None of these pages exist any more. Reopen the PDF and try again.');
   ctx.progress(0.95, 'Saving');
   return [await save(out, ctx.out(inputs[0], 'pdf', ' organized'))];
 };
@@ -144,6 +147,20 @@ export const tools: Record<string, ToolFn> = { mergePdf, organizePdf, splitPdf }
 ipcMain.handle('pdf:read', async (_e, path: string) => {
   if (extname(path).toLowerCase() !== '.pdf') throw new Error('Not a PDF');
   return new Uint8Array(await readFile(path));
+});
+
+/** Bytes [begin, end) of a PDF: the windows let pdf.js read big files in ranges, not in one go. */
+ipcMain.handle('pdf:range', async (_e, path: string, begin: number, end: number) => {
+  if (extname(path).toLowerCase() !== '.pdf') throw new Error('Not a PDF');
+  const length = Math.min(Math.max(0, Math.floor(end) - Math.floor(begin)), 64 * 1024 * 1024);
+  const fh = await openFile(path, 'r');
+  try {
+    const buf = new Uint8Array(length);
+    const { bytesRead } = await fh.read(buf, 0, length, Math.max(0, Math.floor(begin)));
+    return bytesRead === length ? buf : buf.slice(0, bytesRead);
+  } finally {
+    await fh.close();
+  }
 });
 
 /** Page count + protection check, used by the merge list before anything renders. */

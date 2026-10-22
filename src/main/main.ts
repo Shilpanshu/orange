@@ -28,6 +28,13 @@ if (process.env.ORANGE_USER_DATA) app.setPath('userData', process.env.ORANGE_USE
 if (!app.requestSingleInstanceLock()) app.exit(0);
 app.setAppUserModelId('app.orange.converter');
 startCrashCapture();
+// Orange's windows only show their own pages. Without this, a file dropped on a window that doesn't
+// take drops (Settings, a tool window, the progress panel) navigates it to that file, which then runs
+// with the preload bridge attached.
+app.on('web-contents-created', (_e, wc) => {
+  wc.on('will-navigate', (e) => e.preventDefault());
+  wc.setWindowOpenHandler(() => ({ action: 'deny' }));
+});
 
 let tray: Tray | null = null;
 const watcher = new DragWatcher();
@@ -46,6 +53,16 @@ function wheelForMod(mod: ModKey): WheelKind | null {
 /** Explorer's right-click menu (and other launchers) open the wheel in click mode. */
 function openWheelFor(w: WheelKind, paths: string[]) {
   if (!paths.length) return;
+  // Explorer starts one process per selected file, so launches can arrive before the wheel page
+  // has loaded; a message sent then is lost and the wheel opens empty.
+  if (!wheel.win) {
+    app.whenReady().then(() => openWheelFor(w, paths));
+    return;
+  }
+  if (wheel.win.webContents.isLoading()) {
+    wheel.win.webContents.once('did-finish-load', () => openWheelFor(w, paths));
+    return;
+  }
   watcher.listeningNav = false;
   wheel.open({ wheel: w, mode: 'click', paths, prefs: wheelPrefs() });
 }
@@ -143,8 +160,10 @@ app.whenReady().then(() => {
     if (!w) return;
     watcher.listeningNav = true;
     wheel.open({ wheel: w, mode: 'drag', prefs: wheelPrefs() });
+    // A slow answer for an earlier drag must not land on this drag's wheel.
+    const session = wheel.session;
     dragSelection.then((paths) => {
-      if (paths.length && wheel.isOpen) wheel.setPaths(paths);
+      if (paths.length && wheel.isOpen && wheel.session === session) wheel.setPaths(paths);
     });
   });
   watcher.on('release', () => {
@@ -163,10 +182,9 @@ app.whenReady().then(() => {
   startWatching();
   syncContextMenu();
   registerClipboardHotkey((paths) => openWheelFor('convert', paths));
-  // Launched from the Explorer menu: open the wheel once the wheel page has loaded.
-  const launchArgv = process.argv;
-  if (wheel.win.webContents.isLoading()) wheel.win.webContents.once('did-finish-load', () => handleArgv(launchArgv, openWheelFor));
-  else handleArgv(launchArgv, openWheelFor);
+  // Launched from the Explorer menu. Gathered with any second-instance launches from the same
+  // multi-selection; openWheelFor waits for the wheel page to load.
+  handleArgv(process.argv, openWheelFor);
   log('Orange started');
 
   registerWheelIpc(wheel, (itemId, paths) => {

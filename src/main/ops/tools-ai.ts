@@ -911,7 +911,10 @@ const ocr: ToolFn = async (inputs, ctx) => {
           if (wantPdf) {
             const doc = combined ?? (await PDFDocument.create());
             doc.setProducer('Orange');
-            const pic = img.kind === 'jpg' ? await doc.embedJpg(img.bytes) : await doc.embedPng(img.bytes);
+            // A fresh copy: small files come back as a slice of Node's shared pool and pdf-lib's JPEG
+            // reader ignores the slice offset ("SOI not found in JPEG").
+            const bytes = new Uint8Array(img.bytes);
+            const pic = img.kind === 'jpg' ? await doc.embedJpg(bytes) : await doc.embedPng(bytes);
             const pw = (img.w * 72) / img.dpi;
             const ph = (img.h * 72) / img.dpi;
             const p = doc.addPage([pw, ph]);

@@ -1,8 +1,8 @@
 // Split a PDF: every page, every N pages, custom ranges, or extract a hand-picked selection.
 // The page grid shows exactly how the parts will fall before anything is written.
 import { api, base, field, h, numberInput, section, segmented, shell } from '../../shared/ui';
-import { thumb, fitRotated, docFor, whenVisible } from './thumbs';
-import { PdfError } from './pdfjs';
+import { fitRotated, docFor, createThumbLoader } from './thumbs';
+import { isProtected, PdfError } from './pdfjs';
 
 type Mode = 'every' | 'chunks' | 'ranges' | 'extract';
 
@@ -34,7 +34,11 @@ export async function splitPdf(paths: string[]) {
 
   let total = 0;
   try {
-    total = (await docFor(file)).numPages;
+    const doc = await docFor(file);
+    total = doc.numPages;
+    // An owner password opens fine here but the split itself (pdf-lib) refuses the file.
+    if (await isProtected(doc)) throw new PdfError('This PDF is protected. Remove the protection with Unlock first.', 'encrypted');
+    if (!total) throw new PdfError('This PDF has no pages.', 'broken');
   } catch (e) {
     s.stage.append(h('p', { class: 'empty-state' }, e instanceof PdfError ? e.message : String((e as Error)?.message ?? e)));
     s.primary.disabled = true;
@@ -91,24 +95,16 @@ export async function splitPdf(paths: string[]) {
   grid.style.setProperty('--pf-thumb', '96px');
   s.stage.append(grid);
   const cards: HTMLElement[] = [];
+  const thumbs = createThumbLoader({ root: grid, side: () => 124, fit: (_box, img, aspect) => fitRotated(img, aspect, 0, 96, 124) });
   for (let i = 0; i < total; i++) {
     const img = h('img', { alt: '', draggable: false });
     const box = h('div', { class: 'pf-thumb skeleton' }, img);
     fitRotated(img, 0.77, 0, 96, 124);
     const c = h('div', { class: 'pf-card', 'data-i': String(i), title: `Page ${i + 1}` }, box, h('div', { class: 'pf-cap' }, h('span', { class: 'pf-num' }, String(i + 1)), h('span', { class: 'pf-part' })));
-    whenVisible(c, () =>
-      thumb(file, i, 192).then(
-        (t) => {
-          img.src = t.url;
-          fitRotated(img, t.aspect, 0, 96, 124);
-          box.classList.remove('skeleton');
-        },
-        () => box.classList.remove('skeleton'),
-      ),
-    );
     cards.push(c);
   }
   grid.append(...cards);
+  cards.forEach((c, i) => thumbs.watch(c.firstElementChild as HTMLElement, file, i));
 
   grid.addEventListener('mousedown', (e) => {
     const c = (e.target as HTMLElement).closest<HTMLElement>('.pf-card');

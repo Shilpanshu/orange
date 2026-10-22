@@ -65,7 +65,12 @@ export function check(fromUser = true) {
     if (fromUser) hud.notice('Updates are only available in the installed app.');
     return;
   }
-  if (state.status === 'ready') return installNow();
+  // Ready: it installs on quit. Restarting is the tray's explicit "Restart to update", never a side
+  // effect of "Check for updates" (Settings has that button), which would kill running jobs.
+  if (state.status === 'ready') {
+    if (fromUser) hud.notice(`Orange ${state.version} is ready. It installs when you quit, or choose Restart to update in the tray.`);
+    return;
+  }
   if (state.status === 'checking' || state.status === 'downloading') return;
   manual = fromUser;
   autoUpdater.checkForUpdates().catch((e) => log('update check failed', e));

@@ -371,6 +371,8 @@ const joinVideos: ToolFn = async (inputs, ctx) => {
       ['h264', 'hevc'].includes(x.vcodec) &&
       x.width === first.width &&
       x.height === first.height &&
+      // The concat demuxer keeps only the first clip's rotation, so it must be the same for all.
+      x.rotation === first.rotation &&
       Math.abs(x.fps - first.fps) < 0.01 &&
       x.hasAudio === first.hasAudio &&
       (!x.hasAudio || (x.acodec === 'aac' && x.sampleRate === first.sampleRate && x.channels === first.channels)),
@@ -432,8 +434,10 @@ const stamp = (t: number) => {
 const videoFrames: ToolFn = async ([input], ctx) => {
   const o = ctx.options ?? {};
   const info = await probe(input, ctx.signal);
-  const times: number[] = [...new Set<number>((o.times ?? []).map((t: any) => num(t, -1)).filter((t: number) => t >= 0))].sort((a, b) => a - b);
-  if (!times.length) throw new UserError('Add at least one frame.');
+  // A time past the last frame makes ffmpeg write nothing (and exit happily).
+  const last = info.duration > 0 ? info.duration : Infinity;
+  const times: number[] = [...new Set<number>((o.times ?? []).map((t: any) => num(t, -1)).filter((t: number) => t >= 0 && t < last))].sort((a, b) => a - b);
+  if (!times.length) throw new UserError((o.times ?? []).length ? 'The chosen frames are past the end of the video.' : 'Add at least one frame.');
   const half = 0.5 / (info.fps || 30);
   const dir = times.length === 1 ? '' : ctx.outDir(input, `${stemOf(input)} frames`);
   let done = 0;
@@ -442,9 +446,14 @@ const videoFrames: ToolFn = async ([input], ctx) => {
     // Seeking just before the frame's timestamp makes ffmpeg emit exactly that frame.
     await ffmpeg(['-ss', ts(Math.max(0, t - half)), '-i', input, '-map', '0:v:0', '-an', '-sn', '-frames:v', '1', '-update', '1', out], { signal: ctx.signal });
     ctx.progress(++done / times.length, `Saved ${done} of ${times.length}`);
-    return out;
+    return existsSync(out) ? out : '';
   });
-  return dir ? [dir] : outs;
+  const saved = outs.filter(Boolean);
+  if (!saved.length) {
+    if (dir) rmSync(dir, { recursive: true, force: true });
+    throw new UserError("The frames couldn't be read from this video.");
+  }
+  return dir ? [dir] : saved;
 };
 
 // ----------------------------------------------------------------- splitVideo
@@ -555,32 +564,47 @@ const normalizeAudio: ToolFn = async (inputs, ctx) => {
     LRA: Math.max(1, Math.min(50, num(o.LRA, 11))),
   };
   const outs: string[] = [];
+  const errors: string[] = [];
   const slice = slices(inputs.length);
+  // Check every file before writing anything: a later failure would leave results Undo can't see.
+  const infos: MediaInfo[] = [];
+  for (const input of inputs) {
+    const info = await probe(input, ctx.signal);
+    if (!info.hasAudio) throw new UserError(`${input.split(/[\\/]/).pop()} has no audio.`);
+    infos.push(info);
+  }
   for (let i = 0; i < inputs.length; i++) {
     const input = inputs[i];
     const [a, b] = slice(i);
     const mid = a + (b - a) * 0.4;
-    const info = await probe(input, ctx.signal);
-    if (!info.hasAudio) throw new UserError(`${input.split(/[\\/]/).pop()} has no audio.`);
-    const m = await measureLoudness(input, target, ctx, [a, mid]);
-    const af =
-      `loudnorm=I=${target.I}:TP=${target.TP}:LRA=${target.LRA}` +
-      `:measured_I=${m.I}:measured_TP=${m.TP}:measured_LRA=${m.LRA}:measured_thresh=${m.thresh}:offset=${m.offset}:linear=true:print_format=summary`;
-    const sr = info.sampleRate || 48000;
-    let out: string;
-    let args: string[];
-    if (info.hasVideo) {
-      const ext = extOf(input) || 'mp4';
-      out = ctx.out(input, ext, ' normalized');
-      args = ['-i', input, '-map', '0:v:0', '-map', '0:a:0', '-c:v', 'copy', '-af', af, ...audioForVideoContainer(ext), ...sampleRateArgs(ext, sr), '-map_metadata', '0', ...faststart(ext), out];
-    } else {
-      const ext = audioOutExt(input);
-      out = ctx.out(input, ext, ' normalized');
-      args = ['-i', input, '-map', '0:a:0', '-vn', '-af', af, ...audioEncodeArgs(ext, info), ...sampleRateArgs(ext, sr), '-map_metadata', '0', out];
+    const info = infos[i];
+    try {
+      const m = await measureLoudness(input, target, ctx, [a, mid]);
+      const af =
+        `loudnorm=I=${target.I}:TP=${target.TP}:LRA=${target.LRA}` +
+        `:measured_I=${m.I}:measured_TP=${m.TP}:measured_LRA=${m.LRA}:measured_thresh=${m.thresh}:offset=${m.offset}:linear=true:print_format=summary`;
+      const sr = info.sampleRate || 48000;
+      let out: string;
+      let args: string[];
+      if (info.hasVideo) {
+        const ext = extOf(input) || 'mp4';
+        out = ctx.out(input, ext, ' normalized');
+        args = ['-i', input, '-map', '0:v:0', '-map', '0:a:0', '-c:v', 'copy', '-af', af, ...audioForVideoContainer(ext), ...sampleRateArgs(ext, sr), '-map_metadata', '0', ...faststart(ext), out];
+      } else {
+        const ext = audioOutExt(input);
+        out = ctx.out(input, ext, ' normalized');
+        args = ['-i', input, '-map', '0:a:0', '-vn', '-af', af, ...audioEncodeArgs(ext, info), ...sampleRateArgs(ext, sr), '-map_metadata', '0', out];
+      }
+      await ffmpeg(args, { ctx, duration: info.duration, range: [mid, b], note: inputs.length > 1 ? `Normalizing ${i + 1} of ${inputs.length}` : 'Normalizing' });
+      outs.push(out);
+    } catch (e: any) {
+      // One file failing must not lose (or hide from Undo) the ones already done.
+      if (ctx.signal.aborted || inputs.length === 1) throw e;
+      log('normalize failed', input, e);
+      errors.push(`${input.split(/[\\/]/).pop()}: ${e?.message ?? e}`);
     }
-    await ffmpeg(args, { ctx, duration: info.duration, range: [mid, b], note: inputs.length > 1 ? `Normalizing ${i + 1} of ${inputs.length}` : 'Normalizing' });
-    outs.push(out);
   }
+  if (!outs.length) throw new UserError(errors.join('\n'));
   return outs;
 };
 
@@ -666,6 +690,17 @@ const trimAudio: ToolFn = async ([input], ctx) => {
     ['-ss', ts(s), '-i', input, '-t', ts(e - s), '-map', '0:a:0', '-vn', ...(af.length ? ['-af', af.join(',')] : []), ...audioEncodeArgs(ext, info), ...sampleRateArgs(ext, info.sampleRate), '-map_metadata', '0', out],
     { ctx, duration: e - s, note: 'Trimming' },
   );
+  // Removing silence from a selection that is all silence leaves an empty file.
+  if (o.trimSilence) {
+    const left = await probe(out, ctx.signal).then(
+      (x) => x.duration,
+      () => 0,
+    );
+    if (left < 0.05) {
+      rmSync(out, { force: true });
+      throw new UserError('The selection is all silence at this threshold, so nothing would be left.');
+    }
+  }
   return [out];
 };
 
@@ -741,6 +776,8 @@ const joinAudio: ToolFn = async (inputs, ctx) => {
   const ext = o.format && o.format !== 'same' ? String(o.format) : audioOutExt(inputs[0]);
   let sr = first.sampleRate || 44100;
   if (ext === 'opus') sr = 48000;
+  // MP3 and WMA can't go above 48 kHz (a 96 kHz FLAC joined to MP3 would fail).
+  if ((ext === 'mp3' || ext === 'wma') && sr > 48000) sr = 48000;
   const layout = infos.some((x) => x.channels >= 2) ? 'stereo' : 'mono';
   const minDur = Math.min(...infos.map((x) => x.duration));
   const xf = Math.max(0, Math.min(num(o.crossfade, 0), 10, minDur / 2 - 0.05));

@@ -26,7 +26,11 @@ export async function splitVideo([path]: string[]) {
   tl.onSeek((t) => (player.pause(), player.seek(t)));
   player.onTime((t) => tl.setTime(t));
 
-  const points = () => (mode === 'equal' ? Array.from({ length: parts - 1 }, (_, i) => ((i + 1) * D) / parts) : [...markers].sort((a, b) => a - b));
+  // Markers dragged on top of each other would make an empty part (and a failed export).
+  const points = () =>
+    mode === 'equal'
+      ? Array.from({ length: parts - 1 }, (_, i) => ((i + 1) * D) / parts)
+      : [...markers].sort((a, b) => a - b).filter((p, i, all) => i === 0 || p - all[i - 1] >= 0.05);
   const snapped = (p: number) => kf.reduce((best, k) => (Math.abs(k - p) < Math.abs(best - p) ? k : best), kf[0] ?? p);
   const effective = () => {
     let ps = points();

@@ -25,6 +25,7 @@ class Hud {
   private timers = new Map<number, NodeJS.Timeout>();
   private lastSend = 0;
   private pendingSend?: NodeJS.Timeout;
+  private height = 80;
 
   private ensure() {
     if (this.win && !this.win.isDestroyed()) return this.win;
@@ -49,6 +50,7 @@ class Hud {
   }
 
   private place(height: number) {
+    this.height = height;
     const win = this.ensure();
     const wa = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea;
     const h = Math.min(Math.max(height, 40), 520);
@@ -83,7 +85,7 @@ class Hud {
     this.timers.set(
       id,
       setTimeout(() => {
-        this.rows.delete(id);
+        this.remove(id);
         this.flush(true);
       }, linger),
     );
@@ -117,6 +119,16 @@ class Hud {
       failed: (msg: string) => this.finish(id, { state: 'failed', note: msg }, 12000),
       cancelled: () => this.finish(id, { state: 'cancelled', note: 'Cancelled' }, 1800),
     };
+  }
+
+  /** Forgets a row and everything kept for it (its Undo holds the output list). */
+  private remove(id: number) {
+    this.rows.delete(id);
+    this.undos.delete(id);
+    this.undoKinds.delete(id);
+    this.cancels.delete(id);
+    clearTimeout(this.timers.get(id));
+    this.timers.delete(id);
   }
 
   notice(msg: string) {
@@ -153,11 +165,20 @@ class Hud {
     ipcMain.on('hud:height', (_e, h: number) => this.place(h));
     ipcMain.on('hud:cancel', (_e, id: number) => this.cancels.get(id)?.());
     ipcMain.on('hud:dismiss', (_e, id: number) => {
-      this.rows.delete(id);
+      this.remove(id);
       this.flush(true);
     });
     ipcMain.on('hud:reveal', (_e, p: string) => shell.showItemInFolder(p));
-    ipcMain.on('hud:open', (_e, p: string) => shell.openPath(p));
+    // Only files a job made: opening is launching, so the panel can't be used to run anything else.
+    ipcMain.on('hud:open', (_e, p: string) => {
+      if ([...this.rows.values()].some((r) => r.outputs?.includes(p))) void shell.openPath(p);
+    });
+    // A monitor was unplugged or rearranged: bring a visible panel back on screen.
+    const replace = () => {
+      if (this.win && !this.win.isDestroyed() && this.win.isVisible()) this.place(this.height);
+    };
+    screen.on('display-removed', replace);
+    screen.on('display-metrics-changed', replace);
     // Let the user hover to keep a finished row around.
     ipcMain.on('hud:hold', (_e, id: number, hold: boolean) => {
       const r = this.rows.get(id);

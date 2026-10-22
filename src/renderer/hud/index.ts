@@ -2,6 +2,13 @@ import { icon } from '../shared/icons';
 
 declare const orange: import('../../preload/preload').OrangeApi;
 
+// This window takes no drops: show the no-drop cursor and ignore a dropped file.
+window.addEventListener('dragover', (e) => {
+  e.preventDefault();
+  if (e.dataTransfer) e.dataTransfer.dropEffect = 'none';
+});
+window.addEventListener('drop', (e) => e.preventDefault());
+
 interface Row {
   id: number;
   title: string;

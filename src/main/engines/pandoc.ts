@@ -48,7 +48,8 @@ async function unpackTo(packed: string, name: string, dirs: string[]): Promise<s
       await pipeline(createReadStream(packed), createZstdDecompress({ params: { [zc.ZSTD_d_windowLogMax]: 27 } }), createWriteStream(part));
       renameSync(part, exe);
       for (const f of readdirSync(dir)) {
-        if (/^pandoc-[0-9a-z]+\.exe$/.test(f) && f !== name) rmSync(join(dir, f), { force: true });
+        // Older unpacked copies, and the .part of an unpack that was cut off (Orange closed or crashed midway).
+        if (/^pandoc-[0-9a-z]+\.exe(\.\d+\.part)?$/.test(f) && f !== name) rmSync(join(dir, f), { force: true });
       }
       log(`pandoc unpacked to ${exe} in ${Date.now() - started} ms`);
       return exe;

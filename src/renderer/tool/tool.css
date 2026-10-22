@@ -149,12 +149,26 @@ input.invalid {
   transition: transform 0.18s ease;
 }
 .pf-thumb.skeleton img,
-.pf-thumb.pf-thumb-bad img {
+.pf-mini.skeleton img {
   visibility: hidden;
 }
-.pf-thumb.pf-thumb-bad {
+.pf-thumb-bad img {
+  display: none;
+}
+.pf-thumb.pf-thumb-bad,
+.pf-mini.pf-thumb-bad {
   background: var(--surface-2);
   border-radius: 4px;
+}
+.pf-thumb-msg {
+  padding: 8px;
+  font-size: 11px;
+  line-height: 1.35;
+  text-align: center;
+  color: var(--ink-2);
+}
+.pf-mini .pf-thumb-msg {
+  display: none;
 }
 .pf-cap {
   display: flex;

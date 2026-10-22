@@ -58,12 +58,14 @@ function isTar(file: string): boolean {
 
 /** Extract `archive` into `dir`; a compressed tarball (.tar.gz, .tgz…) is unpacked all the way. */
 async function extractInto(archive: string, dir: string, ctx: Ctx, lo: number, hi: number) {
-  await sevenZip(['x', NO_PASSWORD, `-o${dir}`, archive], ctx, lo, (lo + hi) / 2);
+  // -snl-: skip symbolic links (common in Linux tarballs). Creating one needs admin rights or Developer Mode
+  // on Windows, and 7-Zip fails the whole extraction when it can't (or when a link points outside).
+  await sevenZip(['x', NO_PASSWORD, '-snl-', `-o${dir}`, archive], ctx, lo, (lo + hi) / 2);
   const items = readdirSync(dir);
   if (items.length === 1 && /\.(gz|tgz|bz2|tbz2?|xz|txz|zst)$/i.test(archive)) {
     const inner = join(dir, items[0]);
     if (statSync(inner).isFile() && (/\.tar$/i.test(inner) || isTar(inner))) {
-      await sevenZip(['x', `-o${dir}`, inner], ctx, (lo + hi) / 2, hi);
+      await sevenZip(['x', '-snl-', `-o${dir}`, inner], ctx, (lo + hi) / 2, hi);
       rmSync(inner, { force: true });
     }
   }

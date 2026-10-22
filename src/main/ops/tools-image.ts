@@ -2,7 +2,7 @@
 // Renderer-only tools (edit, annotate, frame, redact, collage) save through file:saveBytes.
 import sharp, { type Sharp } from 'sharp';
 import { PDFDocument } from 'pdf-lib';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, dirname, extname, join } from 'node:path';
 import { extOf } from '../../shared/catalog';
 import { toBrowserImage } from './convert-image';
@@ -120,6 +120,7 @@ const cropImage: ToolFn = async (inputs, ctx) => {
     inputs,
     3,
     async (input) => {
+      let out = '';
       try {
         const src = await readable(input, ctx);
         const meta = await sharp(src.path).metadata();
@@ -146,10 +147,11 @@ const cropImage: ToolFn = async (inputs, ctx) => {
         img = img.extract(r);
         if (o.out) img = img.resize(Math.round(o.out.w), Math.round(o.out.h), { fit: 'fill', kernel: 'lanczos3' });
         const fmt = outFormat(input);
-        const out = ctx.out(input, fmt, ' cropped');
+        out = ctx.out(input, fmt, ' cropped');
         await encode(img, fmt).toFile(out);
         outputs.push(out);
       } catch (e: any) {
+        if (out) rmSync(out, { force: true }); // no half-written file from a failed encode
         if (inputs.length === 1) throw e;
         errors.push(`${basename(input)}: ${e?.message ?? e}`);
       } finally {
@@ -182,11 +184,13 @@ async function embeddable(input: string, ctx: Ctx): Promise<{ kind: 'jpg' | 'png
   const src = await readable(input, ctx);
   const meta = await sharp(src.path).metadata();
   const upright = !meta.orientation || meta.orientation === 1;
+  // Copied into a fresh array: Node hands small files back as a slice of a shared pool, and pdf-lib's
+  // JPEG reader looks at `.buffer` from offset 0 ("SOI not found in JPEG" for files under ~4 KB).
   if (!src.decoded && ['jpg', 'jpeg', 'jfif'].includes(e) && upright && meta.space !== 'cmyk') {
-    return { kind: 'jpg', bytes: readFileSync(input) };
+    return { kind: 'jpg', bytes: new Uint8Array(readFileSync(input)) };
   }
   if (!src.decoded && e === 'png' && meta.depth === 'uchar' && !meta.isProgressive) {
-    return { kind: 'png', bytes: readFileSync(input) };
+    return { kind: 'png', bytes: new Uint8Array(readFileSync(input)) };
   }
   const img = sharp(src.path, { autoOrient: true, animated: false }).toColourspace('srgb');
   if (meta.hasAlpha) return { kind: 'png', bytes: await img.png({ compressionLevel: 8 }).toBuffer() };

@@ -2,8 +2,9 @@
 import { readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 
-const root = new URL('..', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1');
+const root = fileURLToPath(new URL('..', import.meta.url)).replace(/[\\/]$/, '');
 const dir = join(root, 'scripts', 'vendor');
 for (const f of readdirSync(dir).filter((f) => f.endsWith('.mjs')).sort()) {
   console.log(`\n== ${f}`);

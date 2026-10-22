@@ -47,6 +47,12 @@ export async function trimAudio([path]: string[]) {
     if (b - a < min) {
       if (which === 'end') a = Math.max(0, b - min);
       else b = Math.min(D, a + min);
+      // Pinned against the end (or start) of the file: move the other point instead, so the
+      // selection never collapses to nothing.
+      if (b - a < min) {
+        if (which === 'end') b = Math.min(D, a + min);
+        else a = Math.max(0, b - min);
+      }
     }
     start = a;
     end = b;

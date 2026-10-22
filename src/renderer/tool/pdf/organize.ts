@@ -2,8 +2,8 @@
 // Nothing touches the file until Save, which writes a new PDF next to the original.
 import { api, base, h, shell } from '../../shared/ui';
 import { icon } from '../../shared/icons';
-import { thumb, fitRotated, docFor, whenVisible } from './thumbs';
-import { PdfError } from './pdfjs';
+import { fitRotated, docFor, createThumbLoader, inspectPdf } from './thumbs';
+import { isProtected, PdfError } from './pdfjs';
 
 interface Page {
   key: number; // stable identity for selection/DOM reuse
@@ -42,7 +42,8 @@ export async function organizePdf(paths: string[]) {
   zoom.addEventListener('input', () => {
     size = Number(zoom.value);
     grid.style.setProperty('--pf-thumb', `${size}px`);
-    for (const el of grid.children) layoutCard(el as HTMLElement);
+    for (const el of grid.children) if ((el as HTMLElement).dataset.key) layoutCard(el as HTMLElement);
+    thumbs.refresh();
   });
   const toolbar = h(
     'div',
@@ -69,6 +70,9 @@ export async function organizePdf(paths: string[]) {
   // ------------------------------------------------------------- load
   try {
     const doc = await docFor(file);
+    // An owner password opens fine here but saving (pdf-lib) refuses the file.
+    if (await isProtected(doc)) throw new PdfError('This PDF is protected. Remove the protection with Unlock first.', 'encrypted');
+    if (!doc.numPages) throw new PdfError('This PDF has no pages.', 'broken');
     pages = Array.from({ length: doc.numPages }, (_, i) => ({ key: ++seq, src: file, index: i, rotate: 0 }));
   } catch (e) {
     const msg = e instanceof PdfError ? e.message : String((e as Error)?.message ?? e);
@@ -79,6 +83,7 @@ export async function organizePdf(paths: string[]) {
 
   // ------------------------------------------------------------ state
   function snapshot() {
+    note = '';
     history.push(pages.map((p) => ({ ...p })));
     if (history.length > 100) history.shift();
     future.length = 0;
@@ -86,6 +91,7 @@ export async function organizePdf(paths: string[]) {
   function undo() {
     const prev = history.pop();
     if (!prev) return;
+    note = '';
     future.push(pages);
     pages = prev;
     render();
@@ -93,6 +99,7 @@ export async function organizePdf(paths: string[]) {
   function redo() {
     const next = future.pop();
     if (!next) return;
+    note = '';
     history.push(pages);
     pages = next;
     render();
@@ -132,18 +139,21 @@ export async function organizePdf(paths: string[]) {
     const files = await api().invoke<string[]>('dialog:files', [{ name: 'PDF', extensions: ['pdf'] }], true);
     if (!files.length) return;
     const added: Page[] = [];
+    const skipped: string[] = [];
     for (const f of files) {
-      try {
-        const info = await api().invoke<{ pages: number; encrypted: boolean; error?: string }>('pdf:inspect', f);
-        if (info.encrypted) throw new Error(`${base(f)} is password-protected.`);
-        if (info.error || !info.pages) throw new Error(`${base(f)} isn't a readable PDF.`);
-        for (let i = 0; i < info.pages; i++) added.push({ key: ++seq, src: f, index: i, rotate: 0 });
-      } catch (e: any) {
-        s.status.textContent = e?.message ?? String(e);
-      }
+      const info = await inspectPdf(f);
+      if (info.encrypted) skipped.push(`${base(f)} is password-protected.`);
+      else if (info.error) skipped.push(`${base(f)} isn't a readable PDF.`);
+      else if (!info.pages) skipped.push(`${base(f)} has no pages.`);
+      else for (let i = 0; i < info.pages; i++) added.push({ key: ++seq, src: f, index: i, rotate: 0 });
     }
-    if (!added.length) return;
+    if (!added.length) {
+      note = skipped.join(' ');
+      return render();
+    }
     snapshot();
+    // Shown until the next change, so a skipped file isn't hidden behind the page count.
+    note = skipped.join(' ');
     const t = targets();
     const at = t.length ? Math.max(...t.map((p) => pages.indexOf(p))) + 1 : pages.length;
     pages = [...pages.slice(0, at), ...added, ...pages.slice(at)];
@@ -155,6 +165,16 @@ export async function organizePdf(paths: string[]) {
 
   // ------------------------------------------------------------ cards
   const cards = new Map<number, HTMLElement>();
+  let note = '';
+  const thumbs = createThumbLoader({
+    root: s.full,
+    side: () => size * 1.3,
+    fit: (box, _img, aspect) => {
+      const el = box.parentElement as HTMLElement;
+      el.dataset.aspect = String(aspect);
+      layoutCard(el);
+    },
+  });
 
   function layoutCard(card: HTMLElement) {
     const img = card.querySelector('img') as HTMLImageElement;
@@ -173,22 +193,8 @@ export async function organizePdf(paths: string[]) {
         box,
         h('div', { class: 'pf-cap' }),
       );
-      const el = c;
-      el.dataset.aspect = '0.77';
-      const load = () =>
-        thumb(p.src, p.index, Math.min(400, Math.max(200, size * 1.5))).then(
-          (t) => {
-            img.src = t.url;
-            el.dataset.aspect = String(t.aspect);
-            box.classList.remove('skeleton');
-            layoutCard(el);
-          },
-          () => {
-            box.classList.remove('skeleton');
-            box.classList.add('pf-thumb-bad');
-          },
-        );
-      whenVisible(el, load);
+      c.dataset.aspect = '0.77';
+      thumbs.watch(box, p.src, p.index);
       cards.set(p.key, c);
     }
     c.dataset.rotate = String(p.rotate);
@@ -211,7 +217,11 @@ export async function organizePdf(paths: string[]) {
 
   function render() {
     const live = new Set(pages.map((p) => p.key));
-    for (const k of [...cards.keys()]) if (!live.has(k)) cards.delete(k);
+    for (const [k, c] of [...cards]) {
+      if (live.has(k)) continue;
+      thumbs.unwatch(c.firstElementChild as HTMLElement);
+      cards.delete(k);
+    }
     for (const k of [...selected]) if (!live.has(k)) selected.delete(k);
     const els = pages.map(card);
     // Only re-attach when the order changed: detaching a card mid-click would cancel a drag.
@@ -223,13 +233,24 @@ export async function organizePdf(paths: string[]) {
     undoBtn.disabled = !history.length;
     redoBtn.disabled = !future.length;
     s.primary.disabled = !pages.length;
-    s.status.textContent = pages.length
-      ? `${pages.length} page${pages.length === 1 ? '' : 's'}${n ? ` · ${n} selected` : ''}`
-      : 'No pages';
+    const count = pages.length ? `${pages.length} page${pages.length === 1 ? '' : 's'}${n ? ` · ${n} selected` : ''}` : 'No pages';
+    s.status.textContent = note ? `${note} ${count}` : count;
   }
 
   // ------------------------------------------------------- selection
+  // A plain click on an already-selected page narrows the selection on mouseup, unless it turned
+  // into a drag (so dragging a multi-selection still works).
+  let narrowTo: number | null = null;
+  grid.addEventListener('mouseup', () => {
+    const key = narrowTo;
+    narrowTo = null;
+    if (key === null || dragging) return;
+    selected.clear();
+    selected.add(key);
+    render();
+  });
   grid.addEventListener('mousedown', (e) => {
+    narrowTo = null;
     const c = (e.target as HTMLElement).closest<HTMLElement>('.pf-card');
     if (!c) {
       if (!e.ctrlKey && !e.shiftKey) {
@@ -254,18 +275,7 @@ export async function organizePdf(paths: string[]) {
       anchor = key;
     } else {
       anchor = key;
-      // Plain click on an already-selected page narrows the selection on mouseup (so dragging a
-      // multi-selection still works).
-      c.addEventListener(
-        'mouseup',
-        () => {
-          if (dragging) return;
-          selected.clear();
-          selected.add(key);
-          render();
-        },
-        { once: true },
-      );
+      narrowTo = key;
     }
     render();
   });
@@ -278,6 +288,7 @@ export async function organizePdf(paths: string[]) {
   grid.addEventListener('dragstart', (e) => {
     const c = (e.target as HTMLElement).closest<HTMLElement>('.pf-card');
     if (!c) return;
+    narrowTo = null;
     const key = Number(c.dataset.key);
     if (!selected.has(key)) {
       selected.clear();
@@ -352,7 +363,8 @@ export async function organizePdf(paths: string[]) {
     } else if (k === 'delete' || k === 'backspace') {
       e.preventDefault();
       remove();
-    } else if (k === '[' || (k === 'r' && e.shiftKey)) rotate(-90);
+    } else if (e.ctrlKey || e.altKey || e.metaKey) return;
+    else if (k === '[' || (k === 'r' && e.shiftKey)) rotate(-90);
     else if (k === ']' || k === 'r') rotate(90);
     else if (k === 'arrowleft' || k === 'arrowright') {
       e.preventDefault();

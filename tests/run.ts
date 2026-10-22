@@ -11,6 +11,8 @@ import { hud } from '../src/main/hud';
 import { officeStatus, OfficeUnavailableError, type OfficeStatus } from '../src/main/engines/office';
 import { generateFixtures } from './fixtures';
 import { conversionCases, toolCases, makeT, Skip, type Case } from './cases';
+import { toolCases as toolRegressionCases } from './cases-tools';
+import { convCases } from './cases-conv';
 
 const AI = process.env.ORANGE_TEST_AI === '1';
 const FILTER = (process.env.ORANGE_TEST_FILTER ?? '').toLowerCase();
@@ -117,7 +119,7 @@ async function main() {
   console.log(`Fixtures: ${fixtures.made} generated in ${fixtures.ms} ms${fixtures.failed.length ? `, ${fixtures.failed.length} failed:` : ''}`);
   for (const f of fixtures.failed) console.log(`  ! ${f}`);
 
-  let cases = [...conversionCases(office), ...toolCases({ ai: AI })];
+  let cases = [...conversionCases(office), ...toolCases({ ai: AI }), ...toolRegressionCases({ ai: AI }), ...convCases];
   if (FILTER) cases = cases.filter((c) => `${c.group} ${c.name}`.toLowerCase().includes(FILTER));
   console.log(`Running ${cases.length} cases\n`);
 

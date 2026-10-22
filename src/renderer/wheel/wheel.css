@@ -108,6 +108,35 @@ body {
 .label.dense .fmt {
   font-size: 13px;
 }
+/* More than 12 slices: labels alternate between two rings, so each one gets less width. */
+.label.crowded {
+  width: 64px;
+  margin-left: -32px;
+  height: 34px;
+  margin-top: -17px;
+}
+.label.crowded .ic {
+  margin-bottom: 1px;
+}
+.label.crowded .ic svg {
+  width: 16px;
+  height: 16px;
+}
+.label.crowded .txt,
+.label.crowded .fmt {
+  max-width: 100%;
+  font-size: 10.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.label.crowded .cap {
+  display: none;
+}
+.label.crowded .pin {
+  top: -3px;
+  right: 6px;
+}
 
 .hub {
   position: absolute;

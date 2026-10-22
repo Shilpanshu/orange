@@ -105,9 +105,12 @@ export async function upscaleImage(paths: string[]) {
   );
 
   async function loadThumb() {
+    const p = current;
     thumbImg.removeAttribute('src');
     try {
-      const img = await loadImage(current);
+      const img = await loadImage(p);
+      // Switching images quickly: a slow earlier image must not replace the current one.
+      if (p !== current) return;
       thumbImg.src = img.src;
       await thumbImg.decode().catch(() => {});
     } catch {

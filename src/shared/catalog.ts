@@ -223,10 +223,13 @@ export function wheelItems(wheel: WheelKind, exts: string[], hasFolder = false, 
   if (wheel === 'actions') items = ACTIONS.map((a) => ({ id: `action:${a.id}`, label: a.label, icon: a.icon, sub: a.blurb }));
   else if (wheel === 'tools') {
     items = toolsFor(exts, hasFolder).map((x) => ({ id: `tool:${x.id}`, label: x.label, icon: x.icon, sub: x.blurb }));
-    // Saved presets whose tool applies to these files become their own slices.
+    // Saved presets whose tool applies to these files become their own slices, but only for the
+    // kinds of file they were saved from (a Compress preset made for photos has no video settings).
     const toolIds = new Set(items.map((i) => i.id.slice(5)));
+    const kinds = new Set<string>(exts.map(kindOfExt));
+    if (hasFolder) kinds.add('folder');
     for (const p of prefs?.presets ?? []) {
-      if (toolIds.has(p.tool)) items.push({ id: `preset:${p.id}`, label: p.name, icon: 'star', sub: `Preset · ${TOOLS.find((t) => t.id === p.tool)?.label ?? p.tool}` });
+      if (toolIds.has(p.tool) && [...kinds].every((k) => p.kinds.includes(k))) items.push({ id: `preset:${p.id}`, label: p.name, icon: 'star', sub: `Preset · ${TOOLS.find((t) => t.id === p.tool)?.label ?? p.tool}` });
     }
   } else if (hasFolder) items = [{ id: 'to:zip', label: 'ZIP', sub: 'Compress folder' }];
   else items = conversionTargets(exts).map((x) => ({ id: x.id, label: x.label, sub: x.sub }));

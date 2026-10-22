@@ -5,7 +5,14 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ffmpeg } from './ffmpeg';
 
-const TILE = 512;
+/**
+ * Tile edge: 512 like phones, larger for big pictures. libheif (sharp, GIMP, ImageMagick…) refuses files with
+ * more than 256 items, so a 20000 px picture in 512 px tiles (960 of them) would not open anywhere.
+ */
+function tileFor(width: number, height: number): number {
+  for (const t of [512, 1024, 2048]) if (Math.ceil(width / t) * Math.ceil(height / t) <= 250) return t;
+  return 4096;
+}
 
 export interface HeicOptions {
   /** 1..100, like JPEG quality. */
@@ -19,6 +26,7 @@ export interface HeicOptions {
 
 /** Encode packed 8-bit RGB pixels (width*height*3 bytes, sRGB) to a HEIC file's bytes. */
 export async function encodeHeic(rgb: Buffer, width: number, height: number, opts: HeicOptions): Promise<Buffer> {
+  const TILE = tileFor(width, height);
   const cols = Math.ceil(width / TILE);
   const rows = Math.ceil(height / TILE);
   const pw = cols * TILE;
@@ -40,7 +48,7 @@ export async function encodeHeic(rgb: Buffer, width: number, height: number, opt
   );
   const { hvcC, samples } = readHevcTrack(readFileSync(mp4));
   if (samples.length !== cols * rows) throw new Error(`HEIC encode produced ${samples.length} tiles, expected ${cols * rows}.`);
-  return buildHeif({ hvcC, tiles: samples, cols, rows, width, height, exif: opts.exif ? exifPayload(opts.exif) : undefined });
+  return buildHeif({ hvcC, tiles: samples, tile: TILE, cols, rows, width, height, exif: opts.exif ? exifPayload(opts.exif) : undefined });
 }
 
 /** Grow the picture to whole tiles by repeating the last column/row, so tile edges compress cleanly. */
@@ -198,6 +206,7 @@ function fullBox(type: string, version: number, flags: number, ...parts: Buffer[
 interface HeifParts {
   hvcC: Buffer;
   tiles: Buffer[];
+  tile: number;
   cols: number;
   rows: number;
   width: number;
@@ -235,7 +244,7 @@ function buildHeif(p: HeifParts): Buffer {
     // Properties (1-based indices in ipma).
     const props = [
       box('hvcC', p.hvcC), // 1
-      fullBox('ispe', 0, 0, u32(TILE), u32(TILE)), // 2
+      fullBox('ispe', 0, 0, u32(p.tile), u32(p.tile)), // 2
       fullBox('ispe', 0, 0, u32(p.width), u32(p.height)), // 3
       box('colr', str('nclx'), u16(1), u16(13), u16(6), u8(0x80)), // 4: BT.709 primaries, sRGB transfer, BT.601 matrix, full range
       fullBox('pixi', 0, 0, u8(3), u8(8), u8(8), u8(8)), // 5

@@ -50,10 +50,15 @@ export function run(exe: string, args: string[], opts: RunOptions = {}): Promise
     };
     child.stdout.on('data', feed('stdout'));
     child.stderr.on('data', feed('stderr'));
+    // A failed spawn also errors the pipes (ENOTCONN/EPIPE); the 'error' event below reports it once.
+    for (const s of [child.stdin, child.stdout, child.stderr]) s?.on('error', () => {});
     const onAbort = () => child.kill('SIGKILL');
     opts.signal?.addEventListener('abort', onAbort, { once: true });
-    child.on('error', (e) => {
+    child.on('error', (e: NodeJS.ErrnoException) => {
       opts.signal?.removeEventListener('abort', onAbort);
+      // Windows can't start a process in a folder whose path is longer than ~258 characters; that
+      // surfaces as ENOENT, which would otherwise read as "a part of Orange is missing".
+      if (e.code === 'ENOENT' && opts.cwd && opts.cwd.length >= 248) return reject(new Error(`The folder path is too long for Windows (path too long): ${opts.cwd}`));
       reject(e);
     });
     child.on('close', (code) => {

@@ -101,7 +101,22 @@ export async function redactVideo([path]: string[]) {
       bar.append(l, r);
       let s0 = 0;
       let e0 = 0;
-      bar.addEventListener('pointerdown', () => ((s0 = b.start), (e0 = b.end), select(b)), true);
+      bar.addEventListener(
+        'pointerdown',
+        () => {
+          s0 = b.start;
+          e0 = b.end;
+          if (sel === b) return;
+          // Select without rebuilding the tracks: that would detach this bar mid-press, so the
+          // drag below could not capture the pointer and the bar would never move.
+          sel = b;
+          boxes.forEach(styleBox);
+          tracks.querySelectorAll('.av-bar.sel').forEach((x) => x.classList.remove('sel'));
+          bar.classList.add('sel');
+          renderPanel();
+        },
+        true,
+      );
       const commit = () => renderAll();
       const place = () => {
         bar.style.left = tl.pct(b.start);

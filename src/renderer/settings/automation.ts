@@ -308,7 +308,8 @@ export function renderAutomation(api: Api): Node {
           'div',
           { class: 'auto-field' },
           h('label', {}, 'Do this'),
-          actionSelect(wf.action, presets, (v) => void update({ action: v })),
+          // Leaving a deleted preset re-renders, so its "was deleted" note gives way to the real hint.
+          actionSelect(wf.action, presets, (v) => void update({ action: v }, missing)),
           missing ? h('div', { class: 'auto-hint bad' }, 'Its preset was deleted. Choose another action.') : hint,
         ),
         h('div', { class: 'auto-field' }, h('label', {}, 'File types'), types, h('div', { class: 'auto-hint' }, 'Such as heic, png. Empty for all.')),

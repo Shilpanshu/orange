@@ -6,6 +6,7 @@
 //    or: node scripts/build-assets-image.mjs
 import { cpSync, existsSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 export function copyImageAssets(root, out) {
   const nm = join(root, 'node_modules');
@@ -40,7 +41,7 @@ export function copyImageAssets(root, out) {
 }
 
 if (import.meta.url === `file:///${process.argv[1]?.replace(/\\/g, '/')}` || process.argv[1]?.endsWith('build-assets-image.mjs')) {
-  const root = new URL('..', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1');
+  const root = fileURLToPath(new URL('..', import.meta.url)).replace(/[\\/]$/, '');
   copyImageAssets(root, join(root, 'dist'));
   console.log('[image assets] copied to dist/vendor');
 }

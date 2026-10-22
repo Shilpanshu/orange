@@ -9,9 +9,9 @@
 //   exceljs                 - CSV / TSV / XLSX natively, without any office suite
 //   Chromium (Electron)     - HTML → PDF printing for text formats when Word isn't needed
 import { BrowserWindow, app } from 'electron';
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { readFile, writeFile } from 'node:fs/promises';
-import { basename, dirname, extname, join } from 'node:path';
+import { basename, dirname, extname, join, toNamespacedPath } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import JSZip from 'jszip';
 import ExcelJS from 'exceljs';
@@ -217,21 +217,37 @@ async function pandocTo(input: string, srcExt: string, output: string, target: s
     media = freeSibling(join(dirname(output), `${stemOf(output)} files`));
     extra.push(`--extract-media=${basename(media)}`);
   }
-  await pandocConvert(src, from, output, to, {
+  // pandoc runs in the output folder (so extracted media links are relative), but Windows can't start a
+  // process in a folder path past ~258 characters: work in temp then and move the results over.
+  const work = dirname(output).length >= 240 ? ctx.tmp() : null;
+  const written = work ? join(work, basename(output)) : output;
+  await pandocConvert(src, from, written, to, {
     signal: ctx.signal,
-    cwd: dirname(output),
+    cwd: work ?? dirname(output),
     resourcePath,
     fallbackTitle: title,
     extra,
     tmp: ctx.tmp(),
   });
+  if (work) {
+    moveFile(written, output);
+    const made = media && join(work, basename(media));
+    if (made && existsSync(made)) {
+      try {
+        renameSync(made, media!);
+      } catch {
+        cpSync(made, media!, { recursive: true });
+      }
+    }
+  }
   return media && existsSync(media) ? [output, media] : [output];
 }
 
 /** Any pandoc-readable input → styled standalone HTML (images embedded) in a temp folder. */
 async function toPrintableHtml(input: string, srcExt: string, ctx: Ctx, title: string): Promise<string> {
   const html = join(ctx.tmp(), 'print.html');
-  if (srcExt === 'html') return input;
+  // Chromium can't load a file past MAX_PATH; pandoc can, and embeds the page's images on the way.
+  if (srcExt === 'html' && input.length < 240) return input;
   await pandocTo(input, srcExt, html, 'html', ctx, title);
   return html;
 }
@@ -617,7 +633,9 @@ async function renderPdf(
   const pad = Math.max(2, String(n).length);
   const prefix = opts.prefix ?? 'Page ';
   // Ghostscript expands %d in the output name, so escape any literal % in the path.
-  const pattern = join(outDir.replace(/%/g, '%%'), `${prefix.replace(/%/g, '%%')}%0${pad}d.${fmt}`);
+  // It can't open paths past MAX_PATH (260) without the \\?\ prefix.
+  const longSafe = (p: string) => (p.length >= 240 ? toNamespacedPath(p) : p);
+  const pattern = longSafe(join(outDir.replace(/%/g, '%%'), `${prefix.replace(/%/g, '%%')}%0${pad}d.${fmt}`));
   const dev = fmt === 'png' ? ['-sDEVICE=png16m'] : ['-sDEVICE=jpeg', '-dJPEGQ=92'];
   let done = 0;
   await run(
@@ -633,7 +651,7 @@ async function renderPdf(
       '-dUseCropBox',
       '-dNumRenderingThreads=4',
       `-sOutputFile=${pattern}`,
-      input,
+      longSafe(input),
     ],
     {
       signal: ctx.signal,
@@ -662,8 +680,18 @@ async function pdfToImages(input: string, fmt: 'png' | 'jpg', ctx: Ctx, a = 0.05
     return [out];
   }
   const dir = ctx.outDir(input);
-  await renderPdf(input, dir, fmt, ctx, span(ctx, a, 0.98), { pages: n });
+  await removeOnFailure(dir, () => renderPdf(input, dir, fmt, ctx, span(ctx, a, 0.98), { pages: n }));
   return [dir];
+}
+
+/** A cancelled or failed multi-file export must not leave a half-filled output folder behind. */
+async function removeOnFailure<T>(dir: string, fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (e) {
+    rmSync(dir, { recursive: true, force: true });
+    throw e;
+  }
 }
 
 // ------------------------------------------------------------ PDF → XLSX
@@ -1100,12 +1128,16 @@ async function writeSheetsAsText(input: string, sheets: { name: string; rows: st
   }
   const dir = ctx.outDir(input);
   const used = new Set<string>();
-  for (const s of list) {
-    let name = s.name.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').replace(/[. ]+$/, '') || 'Sheet';
-    for (let i = 2; used.has(name.toLowerCase()); i++) name = `${s.name} ${i}`;
-    used.add(name.toLowerCase());
-    await writeFile(join(dir, `${name}.${target}`), writeDelimited(s.rows, d), 'utf8');
-  }
+  await removeOnFailure(dir, async () => {
+    for (const s of list) {
+      // Sheet names may hold characters file names can't (<>|"); the " 2" suffix goes on the cleaned name.
+      const base = s.name.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').replace(/[. ]+$/, '') || 'Sheet';
+      let name = base;
+      for (let i = 2; used.has(name.toLowerCase()); i++) name = `${base} ${i}`;
+      used.add(name.toLowerCase());
+      await writeFile(join(dir, `${name}.${target}`), writeDelimited(s.rows, d), 'utf8');
+    }
+  });
   return [dir];
 }
 
@@ -1359,7 +1391,7 @@ async function fromSlides(input: string, src: string, target: string, ctx: Ctx):
       return [out];
     }
     const dir = ctx.outDir(input);
-    await renderPdf(pdf, dir, target, ctx, span(ctx, 0.5, 0.98), { pages: n, prefix: 'Slide ', dpi: 216 });
+    await removeOnFailure(dir, () => renderPdf(pdf, dir, target, ctx, span(ctx, 0.5, 0.98), { pages: n, prefix: 'Slide ', dpi: 216 }));
     return [dir];
   }
   throw new UserError(`Can't convert ${src.toUpperCase()} to ${target.toUpperCase()}.`);

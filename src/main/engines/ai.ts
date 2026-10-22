@@ -338,8 +338,40 @@ function reporter(ctx: AiCtx | undefined, span: [number, number], label: string,
   };
 }
 
+type DownloadOpts = { signal?: AbortSignal; onProgress?: (loaded: number, total: number) => void; sha256?: string };
+
+/** Downloads in progress, by destination: two jobs fetching the same model must not share one .part file. */
+const inflight = new Map<string, Promise<void>>();
+
+/** Waits for `p`, but gives up (Cancelled) when `signal` aborts first. */
+function untilAborted(p: Promise<void>, signal?: AbortSignal): Promise<void> {
+  if (!signal) return p;
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) return reject(cancelled());
+    const onAbort = () => reject(cancelled());
+    signal.addEventListener('abort', onAbort, { once: true });
+    p.then(resolve, reject).finally(() => signal.removeEventListener('abort', onAbort));
+  });
+}
+
 /** Streams a URL to `dest` (atomically, via a .part file). Follows redirects; honours `signal`. */
-export async function downloadFile(url: string, dest: string, opts: { signal?: AbortSignal; onProgress?: (loaded: number, total: number) => void; sha256?: string } = {}) {
+export async function downloadFile(url: string, dest: string, opts: DownloadOpts = {}) {
+  const running = inflight.get(dest);
+  if (running) {
+    // Another job is already fetching this file: wait for it rather than write the same .part twice.
+    await untilAborted(running.catch(() => {}), opts.signal);
+    if (fileSize(dest) > 0) return;
+  }
+  const job = fetchTo(url, dest, opts);
+  inflight.set(dest, job);
+  try {
+    await job;
+  } finally {
+    if (inflight.get(dest) === job) inflight.delete(dest);
+  }
+}
+
+async function fetchTo(url: string, dest: string, opts: DownloadOpts) {
   if (opts.signal?.aborted) throw cancelled();
   mkdirSync(dirname(dest), { recursive: true });
   const part = `${dest}.part`;

@@ -40,6 +40,8 @@ async function previewFor(paths: string[]): Promise<{ thumb: string; name: strin
 export class Wheel {
   win!: BrowserWindow;
   isOpen = false;
+  /** Bumped on every close, so late results for an earlier opening (selection, thumbnail) are dropped. */
+  session = 0;
   private hideTimer?: NodeJS.Timeout;
 
   create() {
@@ -110,8 +112,9 @@ export class Wheel {
   }
 
   private sendPreview(paths: string[]) {
+    const session = this.session;
     previewFor(paths).then((p) => {
-      if (p && this.isOpen) this.win.webContents.send('wheel:preview', p);
+      if (p && this.isOpen && this.session === session) this.win.webContents.send('wheel:preview', p);
     });
   }
 
@@ -130,6 +133,7 @@ export class Wheel {
     clearTimeout(this.hideTimer);
     if (!this.isOpen) return;
     this.isOpen = false;
+    this.session++;
     this.win.webContents.send('wheel:close');
     // Let the close animation play, then actually hide.
     this.hideTimer = setTimeout(() => {

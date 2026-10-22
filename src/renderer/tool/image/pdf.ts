@@ -88,10 +88,12 @@ export async function createPdf(paths: string[]) {
 
   // Thumbnails stream in; the page layout needs each image's real proportions.
   render();
-  let i = 0;
+  // A snapshot of the work: pages removed or dragged into a new order while thumbnails are still
+  // loading must not shift an index and leave some page without its thumbnail and proportions.
+  const queue = [...entries];
   const loadNext = async () => {
-    while (i < entries.length) {
-      const e = entries[i++];
+    while (queue.length) {
+      const e = queue.shift()!;
       try {
         const pv = await loadPreview(e.path, 320);
         e.w = pv.w;

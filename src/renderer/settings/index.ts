@@ -204,16 +204,34 @@ function hotkeyInput(field: 'selectionHotkey' | 'clipboardHotkey') {
   const show = () => (s[field] || 'Off').replace('Control', 'Ctrl');
   const input = h('input', { type: 'text', class: 'hotkey-input', readonly: true, value: show() }) as HTMLInputElement;
   input.addEventListener('keydown', (e) => {
+    // Plain Tab still moves focus on, so the field is never a keyboard trap.
+    if (e.key === 'Tab' && !e.ctrlKey && !e.altKey && !e.metaKey) return;
     e.preventDefault();
     if (e.key === 'Escape') return input.blur();
     if (e.key === 'Backspace') {
       save({ [field]: '' } as Partial<Settings>).then(() => (input.value = 'Off'));
       return;
     }
-    if (['Control', 'Shift', 'Alt', 'Meta'].includes(e.key)) return;
+    if (['Control', 'Shift', 'Alt', 'Meta', 'AltGraph', 'Dead', 'Process', 'Unidentified'].includes(e.key)) return;
+    // AltGr arrives as Ctrl+Alt on Windows; it types characters (@, €, {) rather than forming a
+    // shortcut, so recording it would register a global shortcut that hijacks typing.
+    if (e.getModifierState('AltGraph')) return;
+    // Shift alone is not enough: a global Shift+letter would swallow capital letters everywhere.
+    if (!e.ctrlKey && !e.altKey && !e.metaKey) return;
     const parts = [e.ctrlKey && 'Control', e.altKey && 'Alt', e.shiftKey && 'Shift', e.metaKey && 'Super'].filter(Boolean) as string[];
-    if (!parts.length) return;
-    const key = e.key === ' ' ? 'Space' : e.key.length === 1 ? e.key.toUpperCase() : e.key;
+    // Electron accelerator names: Shift+1 is "1" (not "!"), arrows are Up/Down/Left/Right, "+" is Plus.
+    const NAMED: Record<string, string> = { ' ': 'Space', '+': 'Plus', ArrowUp: 'Up', ArrowDown: 'Down', ArrowLeft: 'Left', ArrowRight: 'Right' };
+    const key =
+      NAMED[e.key] ??
+      (/^[a-z]$/i.test(e.key)
+        ? e.key.toUpperCase()
+        : /^Digit\d$/.test(e.code)
+          ? e.code.slice(5)
+          : /^Key[A-Z]$/.test(e.code)
+            ? e.code.slice(3)
+            : e.key.length === 1
+              ? e.key.toUpperCase()
+              : e.key);
     const accel = [...parts, key].join('+');
     input.value = accel.replace('Control', 'Ctrl');
     save({ [field]: accel } as Partial<Settings>);
@@ -373,7 +391,11 @@ async function about() {
       'div',
       { class: 'policy' },
       h('h3', {}, 'Privacy'),
-      h('p', {}, 'Orange processes files only on this computer. It does not upload files, collect analytics, or contact any server, except when you ask it to install LibreOffice.'),
+      h(
+        'p',
+        {},
+        'Orange processes files only on this computer. It never uploads files or collects analytics. It only goes online to check GitHub for updates, to download an AI model or OCR language the first time you use it, and, if you ask, to download LibreOffice.',
+      ),
       h('h3', {}, 'Terms'),
       h('p', {}, 'Orange is provided as-is, without warranty. Results are saved as new files and originals are left untouched, but keep backups of anything important.'),
       h('h3', {}, 'Open-source components'),
@@ -392,11 +414,15 @@ async function about() {
 
 // ---------------------------------------------------------------- shell
 
+let showing = 0;
 async function show(id: string) {
   nav.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.id === id));
   const tab = TABS.find((t) => t.id === id) ?? TABS[1];
+  // Some tabs load asynchronously (Engines, About, Automation): a slow one that finishes after
+  // the user has moved to another tab must not replace it.
+  const seq = ++showing;
   const node = await tab.render();
-  content.replaceChildren(node);
+  if (seq === showing) content.replaceChildren(node);
 }
 
 (async () => {

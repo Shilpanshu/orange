@@ -2,7 +2,7 @@
 // Every tool writes new files next to the originals; nothing is overwritten unless the user turned
 // on "Replace original" (metadata only).
 import { ipcMain } from 'electron';
-import { createWriteStream, readdirSync, statSync } from 'node:fs';
+import { createWriteStream, readdirSync, rmSync, statSync } from 'node:fs';
 import { readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, extname, join, relative } from 'node:path';
 import { cpus } from 'node:os';
@@ -83,6 +83,10 @@ async function ffmpegRun(args: string[], out: string, ctx: Ctx, duration: number
       const m = /^out_time_(?:us|ms)=(\d+)/.exec(line);
       if (m) onFrac(Math.min(1, Number(m[1]) / 1e6 / duration));
     },
+  }).catch((e) => {
+    // Never leave a half-written result behind (failed or cancelled).
+    rmSync(out, { force: true });
+    throw e;
   });
 }
 
@@ -390,9 +394,9 @@ async function compressPdf(input: string, out: string, level: PdfLevel, ctx: Ctx
       );
       return;
     } catch (e) {
+      await rm(out, { force: true });
       if (ctx.signal.aborted) throw e;
       log('ghostscript failed, using pdf-lib', e);
-      await rm(out, { force: true });
     }
   }
 
@@ -609,12 +613,22 @@ const compress: ToolFn = async (inputs, ctx) => {
     const first = rest[0];
     const name = rest.length === 1 ? (isDir(first) ? join(dirname(first), basename(first)) : first) : join(dirname(first), 'Archive');
     const out = ctx.out(name, 'zip');
+    // A ZIP holds each item under its own name; two with the same name (from different folders) clash.
+    const seen = new Set<string>();
+    let clash = '';
+    for (const p of rest) {
+      const n = basename(p);
+      if (seen.has(n.toLowerCase())) clash ||= n;
+      seen.add(n.toLowerCase());
+    }
     try {
+      if (clash) throw new UserError(`Two items are named "${clash}", and a ZIP can't hold both. Rename one of them first.`);
       await zipItems(rest, out, ctx, (f) => rest.forEach((p) => tick(p, f, 'Zipping')));
       outputs.push(out);
     } catch (e: any) {
+      await rm(out, { force: true });
       if (ctx.signal.aborted) throw e;
-      failures.push(`ZIP: ${String(e?.message ?? e).slice(0, 160)}`);
+      failures.push(e instanceof UserError ? e.message : `ZIP: ${String(e?.message ?? e).slice(0, 160)}`);
     }
   }
 
@@ -1071,7 +1085,8 @@ const pushRow = (g: Group, label: string, value: unknown) => {
 };
 
 function exifDateToInput(s: string) {
-  const m = /^(\d{4}):(\d{2}):(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?/.exec(s);
+  // EXIF writes "2024:05:06 07:08:09"; describe() shows the date part as "2024-05-06".
+  const m = /^(\d{4})[:-](\d{2})[:-](\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?/.exec(s);
   return m ? `${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:${m[6] ?? '00'}` : '';
 }
 function inputToExifDate(s: string) {
@@ -1082,7 +1097,8 @@ function inputToExifDate(s: string) {
 const IMAGE_FIELDS = ['make', 'model', 'dateTaken', 'author', 'copyright', 'description', 'gps'];
 const AV_FIELDS = ['title', 'artist', 'album', 'album_artist', 'date', 'genre', 'track', 'comment'];
 const PDF_FIELDS = ['title', 'author', 'subject', 'keywords', 'creator', 'producer'];
-const EDITABLE_IMAGE = new Set(['jpg', 'jpeg', 'jfif', 'png', 'webp', 'tif', 'tiff', 'avif']);
+// Not TIFF: libvips can't write EXIF into it.
+const EDITABLE_IMAGE = new Set(['jpg', 'jpeg', 'jfif', 'png', 'webp', 'avif']);
 
 function fileGroup(path: string): Group {
   const st = statSync(path);
@@ -1326,7 +1342,12 @@ async function finalOut(input: string, ctx: Ctx, suffix: string, write: (out: st
     return input;
   }
   const out = ctx.out(input, extOf(input), suffix);
-  await write(out);
+  try {
+    await write(out);
+  } catch (e) {
+    rmSync(out, { force: true });
+    throw e;
+  }
   return out;
 }
 
@@ -1368,6 +1389,17 @@ async function stripImage(input: string, out: string) {
   await writeFile(out, await img.toBuffer());
 }
 
+/** "lat, lon" in decimal degrees; null for an empty field (remove the location). Throws on anything else. */
+function parseGps(s: string): { lat: number; lon: number } | null {
+  if (!s.trim()) return null;
+  const m = /^\s*(-?\d+(?:\.\d+)?)\s*[,; ]\s*(-?\d+(?:\.\d+)?)\s*$/.exec(s);
+  if (!m) throw new UserError('Location should look like "48.858370, 2.294481" (latitude, longitude).');
+  const lat = Number(m[1]);
+  const lon = Number(m[2]);
+  if (Math.abs(lat) > 90 || Math.abs(lon) > 180) throw new UserError('That location is out of range.');
+  return { lat, lon };
+}
+
 function imageChanges(fields: Record<string, string>, t: Tiff | undefined) {
   const le = t?.le ?? false;
   const ifd0 = new Map<number, Entry | null>();
@@ -1391,13 +1423,10 @@ function imageChanges(fields: Record<string, string>, t: Tiff | undefined) {
     exif.set(0x9004, d ? asciiEntry(0x9004, d) : null);
   }
   if (fields.gps !== undefined) {
-    const m = /^\s*(-?\d+(?:\.\d+)?)\s*[,; ]\s*(-?\d+(?:\.\d+)?)\s*$/.exec(fields.gps);
-    if (!fields.gps.trim()) gps = null;
-    else if (!m) throw new UserError('Location should look like "48.858370, 2.294481" (latitude, longitude).');
+    const pos = parseGps(fields.gps);
+    if (!pos) gps = null;
     else {
-      const lat = Number(m[1]);
-      const lon = Number(m[2]);
-      if (Math.abs(lat) > 90 || Math.abs(lon) > 180) throw new UserError('That location is out of range.');
+      const { lat, lon } = pos;
       gps = new Map<number, Entry | null>([
         [0, { tag: 0, type: T.BYTE, count: 4, bytes: Buffer.from([2, 3, 0, 0]) }],
         [1, asciiEntry(1, lat < 0 ? 'S' : 'N')],
@@ -1434,7 +1463,10 @@ async function editImage(input: string, out: string, fields: Record<string, stri
     }
     return;
   }
-  // WebP / TIFF / AVIF: let libvips write the EXIF (string values).
+  // WebP / AVIF: let libvips write the EXIF (string values). Its TIFF writer drops EXIF altogether,
+  // so a TIFF "edit" would silently change nothing.
+  const fmt = extOf(input);
+  if (fmt !== 'webp' && fmt !== 'avif') throw new UserError(`Orange can't edit metadata in ${fmt.toUpperCase()} files, only show or remove it.`);
   const exif: Record<string, Record<string, string>> = { IFD0: {}, IFD2: {} };
   if (fields.make !== undefined) exif.IFD0.Make = fields.make;
   if (fields.model !== undefined) exif.IFD0.Model = fields.model;
@@ -1442,11 +1474,15 @@ async function editImage(input: string, out: string, fields: Record<string, stri
   if (fields.copyright !== undefined) exif.IFD0.Copyright = fields.copyright;
   if (fields.description !== undefined) exif.IFD0.ImageDescription = fields.description;
   if (fields.dateTaken !== undefined) exif.IFD2.DateTimeOriginal = inputToExifDate(fields.dateTaken);
-  const fmt = extOf(input);
+  if (fields.gps !== undefined) {
+    // libvips takes GPS values as text ("48/1 51/1 301300/10000"); it can add tags but not remove them.
+    const pos = parseGps(fields.gps);
+    if (!pos) throw new UserError(`Orange can't remove just the location from ${extOf(input).toUpperCase()} files. Use Strip to remove all metadata.`);
+    const dms = (deg: number) => degToRational(deg).map(([a, b]) => `${a}/${b}`).join(' ');
+    exif.IFD3 = { GPSLatitudeRef: pos.lat < 0 ? 'S' : 'N', GPSLatitude: dms(pos.lat), GPSLongitudeRef: pos.lon < 0 ? 'W' : 'E', GPSLongitude: dms(pos.lon) };
+  }
   let img = sharpLib()(buf, { failOn: 'none', animated: true }).keepMetadata().withExifMerge(exif);
-  if (fmt === 'webp') img = img.webp({ quality: 95, effort: 5 });
-  else if (fmt === 'avif') img = img.avif({ quality: 80 });
-  else img = img.tiff({ compression: 'lzw' });
+  img = fmt === 'webp' ? img.webp({ quality: 95, effort: 5 }) : img.avif({ quality: 80 });
   await writeFile(out, await img.toBuffer());
 }
 

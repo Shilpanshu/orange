@@ -394,7 +394,10 @@ export async function cropImage(paths: string[]) {
 
   async function show(i: number) {
     st.idx = i;
-    cur = await preview(i);
+    const pv = await preview(i);
+    // Thumbnails clicked in quick succession: only the last one clicked may take the stage.
+    if (st.idx !== i) return;
+    cur = pv;
     if (st.aspectKey === 'original' && !st.exact) st.spec.aspect = aspectValue();
     buildRotated();
     sync();

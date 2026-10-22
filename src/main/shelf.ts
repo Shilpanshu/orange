@@ -167,7 +167,10 @@ class Shelf {
       this.contentHeight = Math.round(h);
       if (!this.collapsed) this.place();
     });
-    ipcMain.on('shelf:open', (_e, p: string) => void shell.openPath(p));
+    // Only what is on the shelf: opening is launching, so the page can't be used to run anything else.
+    ipcMain.on('shelf:open', (_e, p: string) => {
+      if (typeof p === 'string' && this.items.some((i) => i.path.toLowerCase() === p.toLowerCase())) void shell.openPath(p);
+    });
     ipcMain.on('shelf:reveal', (_e, p: string) => shell.showItemInFolder(p));
     // Dragging items out: must start from the renderer's dragstart, synchronously.
     ipcMain.on('shelf:drag', async (e, paths: string[]) => {

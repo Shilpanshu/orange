@@ -79,6 +79,9 @@ function audioLimits(enc: string, a: StreamInfo): string[] {
   if (['libmp3lame', 'wmav2'].includes(enc) && (a.channels ?? 2) > 2) out.push('-ac', '2');
   if (['libmp3lame', 'wmav2', 'aac'].includes(enc) && (a.sampleRate ?? 44100) > 48000) out.push('-ar', '48000');
   if (enc === 'libvorbis' && (a.channels ?? 2) > 8) out.push('-ac', '2');
+  // libopus only takes the Vorbis channel layouts; 5.1(side) (most AC-3/DTS/E-AC-3 tracks), 2.1, 4.0…
+  // make it fail to open. Let ffmpeg remap to the nearest one it accepts.
+  if (enc === 'libopus' && (a.channels ?? 2) > 2) out.push('-filter', 'aformat=channel_layouts=mono|stereo|3.0|quad|5.0|5.1|6.1|7.1');
   return out;
 }
 
@@ -129,7 +132,9 @@ function videoArgs(input: string, info: ProbeInfo, c: Container, allowCopy: bool
     args.push('-map', `0:${v.index}`);
     // mp4/mov keep the rotation flag on copy; the others would lose it, so re-encode (which bakes it in).
     const rotationOk = !v.rotation || c === 'mp4' || c === 'mov';
-    const copy = allowCopy && rotationOk && VIDEO_COPY[c].includes(v.codec);
+    // 10-bit / 4:2:2 / 4:4:4 H.264 (High 10 etc.) plays in neither built-in player: only 8-bit 4:2:0 is copied there.
+    const playable = v.codec !== 'h264' || c === 'mkv' || /^yuvj?420p$/.test(v.pixFmt ?? 'yuv420p');
+    const copy = allowCopy && rotationOk && playable && VIDEO_COPY[c].includes(v.codec);
     if (copy) {
       args.push('-c:v', 'copy');
       if (v.codec === 'hevc' && (c === 'mp4' || c === 'mov')) args.push('-tag:v', 'hvc1'); // plays on Windows/Apple

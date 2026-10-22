@@ -175,6 +175,8 @@ export class History<T> {
 }
 
 export const isTyping = (e: Event) => !!(e.target as HTMLElement)?.closest?.('input[type=text],input[type=number],textarea,[contenteditable]');
+/** Keys a focused control handles itself: arrows on a slider or a list must not nudge the canvas. */
+export const ownsKeys = (e: Event) => isTyping(e) || !!(e.target as HTMLElement)?.closest?.('input[type=range],select');
 
 /** Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y outside text fields. */
 export function undoKeys(undo: () => void, redo: () => void) {

@@ -2,6 +2,7 @@
 // Runs the bundled binaries, reports progress from `-progress pipe:1`, honours cancellation and
 // can return binary stdout (for PCM waveforms and JPEG thumbnails).
 import { spawn } from 'node:child_process';
+import { rmSync } from 'node:fs';
 import { bin } from '../paths';
 import { log } from '../log';
 import { gpuArgsFor } from '../engines/ffmpeg';
@@ -15,6 +16,7 @@ interface SpawnOpts {
   /** Collect stdout as a Buffer (binary-safe). */
   binary?: boolean;
   onStdoutLine?: (line: string) => void;
+  cwd?: string;
 }
 
 interface SpawnResult {
@@ -26,7 +28,7 @@ interface SpawnResult {
 function spawnTool(exe: 'ffmpeg' | 'ffprobe', args: string[], opts: SpawnOpts = {}): Promise<SpawnResult> {
   return new Promise((resolve, reject) => {
     if (opts.signal?.aborted) return reject(new Error('Cancelled'));
-    const child = spawn(bin(exe), args, { windowsHide: true });
+    const child = spawn(bin(exe), args, { windowsHide: true, cwd: opts.cwd });
     const chunks: Buffer[] = [];
     let stderr = '';
     let lineBuf = '';
@@ -69,8 +71,11 @@ function explain(stderr: string): string {
   if (/Invalid data found when processing input/i.test(stderr)) return 'This file could not be read as audio or video.';
   if (/No such file or directory/i.test(stderr)) return 'The file could not be found.';
   if (/Permission denied/i.test(stderr)) return 'The file is in use or read-only.';
-  const err = [...lines].reverse().find((l) => /error|invalid|failed|cannot|could not|not supported/i.test(l));
-  const msg = (err ?? lines[lines.length - 1] ?? '').replace(/^\[[^\]]+\]\s*/, '');
+  // The first specific complaint is the cause; ffmpeg follows it with generic knock-on lines
+  // ("Terminating thread with return code -22 (Invalid argument)") that tell the user nothing.
+  const generic = /Terminating thread|Task finished with error|Nothing was written into output|Error opening output files?\b|Error while (filtering|opening encoder|processing the decoded)|Error reinitializing filters|Error initializing filters|Failed to configure (input|output) pad|Failed to evaluate filter params|Could not open encoder before EOF|Error sending frames to consumers|Conversion failed|Supported sample rates/i;
+  const err = lines.find((l) => /error|invalid|failed|cannot|could not|not supported|unable|matches no streams|not divisible|unknown encoder/i.test(l) && !generic.test(l));
+  const msg = (err ?? [...lines].reverse().find((l) => !generic.test(l)) ?? lines[lines.length - 1] ?? '').replace(/^(\[[^\]]+\]\s*)+/, '');
   return msg.length > 200 ? msg.slice(0, 200) + '…' : msg;
 }
 
@@ -83,6 +88,8 @@ export interface FfOptions {
   range?: [number, number];
   note?: string;
   binary?: boolean;
+  /** Working folder, so a filter can name a file there without escaping its full path. */
+  cwd?: string;
 }
 
 /**
@@ -119,6 +126,7 @@ async function runFfmpeg(args: string[], o: FfOptions): Promise<Buffer> {
   const res = await spawnTool('ffmpeg', full, {
     signal: o.signal ?? o.ctx?.signal,
     binary: o.binary,
+    cwd: o.cwd,
     onStdoutLine: o.binary
       ? undefined
       : (line) => {
@@ -126,6 +134,11 @@ async function runFfmpeg(args: string[], o: FfOptions): Promise<Buffer> {
           if (m && dur) report(Number(m[1]) / 1e6 / dur);
           else if (line === 'progress=end') report(1);
         },
+  }).catch((e) => {
+    // A failed or cancelled run must not leave a half-written file behind (the output is always last).
+    const last = full[full.length - 1];
+    if (/^([a-z]:)?[\\/]/i.test(last)) rmSync(last, { force: true });
+    throw e;
   });
   report(1);
   return res.stdout;
@@ -160,6 +173,8 @@ export interface MediaInfo {
   acodec: string;
   sampleRate: number;
   channels: number;
+  /** Display rotation of the video in degrees (0, 90, 180 or 270). */
+  rotation: number;
   /** Container format name(s) from ffprobe, e.g. "mov,mp4,m4a,3gp,3g2,mj2". */
   format: string;
   bitrate: number;
@@ -199,9 +214,7 @@ export async function probe(path: string, signal?: AbortSignal): Promise<MediaIn
   };
   let width = v ? Number(v.width) || 0 : 0;
   let height = v ? Number(v.height) || 0 : 0;
-  const rot = Math.abs(
-    Number(v?.side_data_list?.find((x: any) => x.rotation !== undefined)?.rotation ?? v?.tags?.rotate ?? 0),
-  );
+  const rot = (((Math.round(Number(v?.side_data_list?.find((x: any) => x.rotation !== undefined)?.rotation ?? v?.tags?.rotate ?? 0) / 90) * 90) % 360) + 360) % 360;
   if (rot === 90 || rot === 270) [width, height] = [height, width];
   let fps = rate(v?.avg_frame_rate);
   if (!fps || fps > 240) fps = rate(v?.r_frame_rate);
@@ -219,6 +232,7 @@ export async function probe(path: string, signal?: AbortSignal): Promise<MediaIn
     acodec: a?.codec_name ?? '',
     sampleRate: Number(a?.sample_rate) || 0,
     channels: Number(a?.channels) || 0,
+    rotation: v ? rot : 0,
     format: j.format?.format_name ?? '',
     bitrate: Number(j.format?.bit_rate) || 0,
     audioBitrate: Number(a?.bit_rate) || 0,
@@ -312,7 +326,8 @@ export function audioEncodeArgs(ext: string, info?: Partial<MediaInfo>): string[
 export function sampleRateArgs(ext: string, sr: number): string[] {
   if (!sr) return [];
   if (ext === 'opus' || ext === 'webm') return ['-ar', '48000'];
-  if (ext === 'wma' && sr > 48000) return ['-ar', '48000'];
+  // MP3 (also inside AVI) and WMA stop at 48 kHz.
+  if (['wma', 'mp3', 'avi'].includes(ext) && sr > 48000) return ['-ar', '48000'];
   return ['-ar', String(sr)];
 }
 

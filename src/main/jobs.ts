@@ -32,9 +32,10 @@ const TOOLS: Record<string, ToolFn> = { ...imageTools, ...avTools, ...pdfTools, 
 
 // Tools whose outputs are the user's own files (renamed, or edited in place). Moving those to the
 // Recycle Bin would be destructive, so they get their own undo, or none.
-const TOOL_UNDO: Record<string, (options: any) => (() => Promise<void>) | null | undefined> = {
-  rename: () => async () => {
-    const r = await undoLastRename();
+const TOOL_UNDO: Record<string, (options: any, outputs: string[]) => (() => Promise<void>) | null | undefined> = {
+  // Undo exactly this job's rename (matched by its outputs), not whichever rename ran last.
+  rename: (_options, outputs) => async () => {
+    const r = await undoLastRename(outputs);
     if (!r.ok) throw new Error(r.message);
   },
   // With "replace original" on, metadata edits overwrite the source: no safe undo.
@@ -52,14 +53,21 @@ function converterFor(kind: Kind, target: string): ConverterModule | undefined {
 
 // ------------------------------------------------------------------ output paths
 
-function uniquePath(p: string): string {
-  if (!existsSync(p)) return p;
-  const ext = extname(p);
-  const stem = p.slice(0, p.length - ext.length);
-  for (let i = 2; ; i++) {
-    const c = `${stem} ${i}${ext}`;
-    if (!existsSync(c)) return c;
+// Names handed out but perhaps not written yet. Files of one job convert in parallel, so photo.jpg
+// and photo.png going to WebP would otherwise both get "photo.webp" and one would overwrite the other.
+const claimed = new Set<string>();
+
+function uniquePath(p: string, claims: string[]): string {
+  const free = (c: string) => !existsSync(c) && !claimed.has(c.toLowerCase());
+  let c = p;
+  if (!free(c)) {
+    const ext = extname(p);
+    const stem = p.slice(0, p.length - ext.length);
+    for (let i = 2; !free((c = `${stem} ${i}${ext}`)); i++);
   }
+  claimed.add(c.toLowerCase());
+  claims.push(c.toLowerCase());
+  return c;
 }
 
 /** Set by watch folders: results go to this folder instead of the usual output setting. */
@@ -83,21 +91,24 @@ function targetDir(input: string): string {
 
 function stemOf(p: string) {
   const b = basename(p);
+  // A folder's whole name is its stem: "photos.2024" zips to "photos.2024.zip", not "photos.zip".
+  if (isDir(p)) return b;
   const e = extname(b);
   return e ? b.slice(0, -e.length) : b;
 }
 
 export function makeCtx(signal: AbortSignal, onProgress: (f: number, note?: string) => void, options?: any) {
   const temps: string[] = [];
+  const claims: string[] = [];
   const ctx: Ctx = {
     signal,
     options,
     progress: onProgress,
     out(input, ext, suffix = '') {
-      return uniquePath(join(targetDir(input), `${stemOf(input)}${suffix}${ext ? '.' + ext : ''}`));
+      return uniquePath(join(targetDir(input), `${stemOf(input)}${suffix}${ext ? '.' + ext : ''}`), claims);
     },
     outDir(input, name) {
-      const d = uniquePath(join(targetDir(input), name ?? stemOf(input)));
+      const d = uniquePath(join(targetDir(input), name ?? stemOf(input)), claims);
       mkdirSync(d, { recursive: true });
       return d;
     },
@@ -107,7 +118,10 @@ export function makeCtx(signal: AbortSignal, onProgress: (f: number, note?: stri
       return d;
     },
   };
-  const cleanup = () => temps.forEach((d) => rmSync(d, { recursive: true, force: true }));
+  const cleanup = () => {
+    temps.forEach((d) => rmSync(d, { recursive: true, force: true }));
+    claims.forEach((k) => claimed.delete(k));
+  };
   return { ctx, cleanup };
 }
 
@@ -206,7 +220,7 @@ const ERROR_HINTS: [RegExp, string][] = [
   [/Invalid data found when processing input|moov atom not found|could not find codec parameters|End of file/i, "This media file looks damaged or incomplete, so it can't be read. If it's still downloading or copying, wait for it to finish."],
   [/does not contain any stream|Output file #0 does not contain any stream|matches no streams/i, "There's nothing to convert in this file: it has no usable audio or video track."],
   [/Unknown encoder|Encoder not found|not compiled with/i, "This format isn't supported by the bundled video engine. Pick another format."],
-  [/height not divisible by 2|width not divisible by 2/i, 'The video has an odd size that this format rejects. Try MP4 or MKV instead.'],
+  [/height not divisible by 2|width not divisible by 2/i, "The video's width or height is an odd number, which this format can't store. Crop or resize it by a pixel first."],
   [/unsupported image format|Input file is missing|VipsForeignLoad|Input buffer contains unsupported/i, "This image format or file can't be read. It may be damaged, or not really an image."],
   [/pixel limit|exceeds pixel limit|too large/i, 'The image is too large to process. Resize it with Compress first.'],
   [/Can not open the file as archive|Unexpected end of archive|Headers Error|Data Error/i, 'The archive is damaged or incomplete.'],
@@ -248,7 +262,10 @@ export async function runChoice(itemId: string, paths: string[]) {
   if (kind === 'preset') {
     const preset = settings.get().presets.find((p) => p.id === id);
     if (!preset) return hud.notice('That preset no longer exists.');
-    const ok = toolsFor(exts, hasFolder).some((t) => t.id === preset.tool);
+    // Same rule as the wheel and watch folders: the tool fits, and so do the kinds it was saved for.
+    const kinds = new Set<string>(exts.map(kindOfExt));
+    if (hasFolder) kinds.add('folder');
+    const ok = toolsFor(exts, hasFolder).some((t) => t.id === preset.tool) && [...kinds].every((k) => preset.kinds.includes(k));
     if (!ok) return hud.notice(`The "${preset.name}" preset doesn't work with ${describe(paths)}.`);
     return runTool(preset.tool, paths, preset.options, preset.name);
   }
@@ -299,7 +316,7 @@ export function runTool(id: string, paths: string[], options: any, title?: strin
     inputs: paths,
     options,
     combined: (ctx) => fn(paths, ctx),
-    undo: () => TOOL_UNDO[id]?.(options),
+    undo: (outputs) => TOOL_UNDO[id]?.(options, outputs),
   });
 }
 
@@ -321,7 +338,6 @@ function describe(paths: string[]) {
 
 ipcMain.handle('tool:run', (_e, id: string, paths: string[], options: any) => runTool(id, paths, options));
 ipcMain.handle('file:reveal', (_e, p: string) => shell.showItemInFolder(p));
-ipcMain.handle('file:open', (_e, p: string) => shell.openPath(p));
 
 export function notifyDone(title: string, body: string) {
   if (Notification.isSupported()) new Notification({ title, body, silent: !settings.get().sounds }).show();
