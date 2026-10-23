@@ -173,3 +173,23 @@ mod tests {
         assert_eq!(super::base64(b"foobar"), "Zm9vYmFy");
     }
 }
+
+/// For diagnostics: the top-level window under the pointer (its class), and whether it is the wheel.
+/// Windows hands a drag to the window under the pointer; if that isn't the wheel, the wheel won't see it.
+pub fn describe_window_under_cursor(wheel: isize) -> String {
+    use windows::Win32::Foundation::POINT;
+    use windows::Win32::UI::WindowsAndMessaging::{GetAncestor, GetClassNameW, GetCursorPos, WindowFromPoint, GA_ROOT};
+    unsafe {
+        let mut p = POINT::default();
+        let _ = GetCursorPos(&mut p);
+        let h = WindowFromPoint(p);
+        if h.0.is_null() {
+            return "no window".into();
+        }
+        let root = GetAncestor(h, GA_ROOT);
+        let mut buf = [0u16; 128];
+        let n = GetClassNameW(root, &mut buf);
+        let class = String::from_utf16_lossy(&buf[..n.max(0) as usize]);
+        format!("{class} ({})", if root.0 as isize == wheel { "the wheel" } else { "not the wheel" })
+    }
+}

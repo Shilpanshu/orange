@@ -303,6 +303,10 @@ let exactPaths: string[] | null = null;
 
 orange.on('wheel:paths', (paths: string[]) => {
   if (exactPaths) return;
+  // A guess that names a folder (a path with no extension) is the one most likely to be wrong: it can
+  // come from another Explorer tab. Showing the lone ZIP slice for what is really a photo is worse than
+  // a brief generic wheel, so such a guess waits for the exact files.
+  if (paths.some((p) => !extOf(p))) return;
   selPaths = paths;
   applySelection();
 });

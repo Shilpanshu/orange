@@ -186,7 +186,20 @@ pub fn open(app: &AppHandle, kind: &str, mode: Mode, paths: Option<Vec<String>>)
     if let Some(p) = paths {
         send_preview(app, p);
     }
-    let _ = session;
+    // Diagnostic: once the drag is over the wheel Windows reports the exact dragged files within a few
+    // milliseconds. If they have not arrived after 700 ms, the wheel is working from a guess; say which
+    // window the drag is actually over, so a report from a real machine shows why.
+    if !was_open && mode == Mode::Drag {
+        let app2 = app.clone();
+        let wheel_hwnd = hwnd.0 as isize;
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(700));
+            let st = app2.state::<AppState>();
+            if st.wheel.is_open() && st.wheel.session.load(Ordering::SeqCst) == session && !drag_paths_known(&app2) {
+                log::write(&format!("no DragEnter 700 ms after the wheel opened; under the pointer: {}", win::describe_window_under_cursor(wheel_hwnd)));
+            }
+        });
+    }
 }
 
 /// True once the window's drop target has reported the exact dragged files for this opening. From then

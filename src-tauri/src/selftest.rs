@@ -605,24 +605,22 @@ fn sc_several_files(ctx: &Ctx) -> Result<serde_json::Value, String> {
 }
 
 /// Regression: the Explorer selection is only a guess made before the drag reaches the wheel. When it
-/// arrived after the exact dragged files and named a folder, the wheel rebuilt itself as the "folder"
-/// wheel (a lone ZIP slice), so dropping a PNG on the first slice made a ZIP instead of a JPG.
+/// arrived after the exact dragged files and named something else (here a Word file, as if it came from
+/// another Explorer tab), the wheel rebuilt itself for that, so dropping a PNG on the first slice made
+/// the wrong output instead of a JPG. The exact files must win.
 fn sc_stale_selection_hint(ctx: &Ctx) -> Result<serde_json::Value, String> {
     let dir = fresh_dir(ctx, "stale-hint");
     let file = png_fixture(&dir, "stale.png", 20);
-    let folder = dir.join("Some folder");
-    let _ = std::fs::create_dir_all(&folder);
+    let other = dir.join("other.docx"); // never touched: only its name reaches the page
     let geo = ctx.open_drag(&[LSHIFT])?;
     // The wrong hint lands while the drag is over the wheel: right after DragEnter, before the drop.
-    let stale = folder.to_string_lossy().into_owned();
+    let stale = other.to_string_lossy().into_owned();
     let inject = || crate::bridge::emit(&ctx.app, wheel::LABEL, "wheel:paths", json!([[stale.clone()]]));
     let drop = ctx.drop_on_with(&geo, &[file], geo.slice0, false, Some(&inject))?;
     let (done, outs, rows) = ctx.outputs(1, Duration::from_secs(20));
     let jpg = outs.iter().any(|o| o.to_lowercase().ends_with(".jpg") && image::open(o).is_ok());
-    let zip = outs.iter().any(|o| o.to_lowercase().ends_with(".zip"));
     check(done, "no job finished after the drop")?;
-    check(!zip, "the stale folder hint turned the wheel into the folder wheel (made a ZIP)")?;
-    check(jpg, "the first slice did not convert the PNG to JPG")?;
+    check(jpg, &format!("the first slice did not convert the PNG to JPG (outputs: {outs:?})"))?;
     Ok(json!({ "drop": drop, "rows": rows }))
 }
 
