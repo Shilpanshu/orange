@@ -585,8 +585,16 @@ pub fn send_drag_selection(app: &tauri::AppHandle) {
         let paths = s.1.clone().unwrap_or_default();
         drop(s);
         use tauri::Manager;
-        if !paths.is_empty() && app.state::<crate::AppState>().wheel.is_open() {
-            crate::bridge::emit(&app, crate::wheel::LABEL, "wheel:paths", serde_json::json!([paths]));
+        if paths.is_empty() || !app.state::<crate::AppState>().wheel.is_open() {
+            return;
         }
+        // The exact files (from the drop target) win over this guess, which can be slow or come from
+        // another Explorer tab.
+        if crate::wheel::drag_paths_known(&app) {
+            crate::log::write(&format!("explorer selection ignored, exact drag paths known: {paths:?}"));
+            return;
+        }
+        crate::log::write(&format!("explorer selection hint: {paths:?}"));
+        crate::bridge::emit(&app, crate::wheel::LABEL, "wheel:paths", serde_json::json!([paths]));
     });
 }

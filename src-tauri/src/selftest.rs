@@ -300,6 +300,7 @@ pub const SCENARIOS: &[Scenario] = &[
     Scenario { name: "arrows-then-hub-drop", pending: None, run: sc_arrows_hub_drop },
     Scenario { name: "folder-to-zip", pending: Some("tools"), run: sc_folder_zip },
     Scenario { name: "several-files", pending: None, run: sc_several_files },
+    Scenario { name: "stale-selection-hint-ignored", pending: None, run: sc_stale_selection_hint },
 ];
 
 pub struct Ctx {
@@ -380,6 +381,19 @@ impl Ctx {
     /// Drives DragEnter, a few DragOvers approaching `to`, then Drop (or DragLeave when `leave`)
     /// on the wheel's registered drop target, with the shell's data object for `paths`.
     fn drop_on(&self, geo: &Geo, paths: &[PathBuf], to: (i32, i32), leave: bool) -> Result<serde_json::Value, String> {
+        self.drop_on_with(geo, paths, to, leave, None)
+    }
+
+    /// As `drop_on`, running `after_enter` once DragEnter has been delivered (and the page has had time
+    /// to act on it), before the drag moves on. Lets a test inject something that arrives mid-drag.
+    fn drop_on_with(
+        &self,
+        geo: &Geo,
+        paths: &[PathBuf],
+        to: (i32, i32),
+        leave: bool,
+        after_enter: Option<&dyn Fn()>,
+    ) -> Result<serde_json::Value, String> {
         let hwnd_raw = geo.hwnd;
         let paths: Vec<String> = paths.iter().map(|p| p.to_string_lossy().into_owned()).collect();
         let probe = geo.slice0;
@@ -434,6 +448,10 @@ impl Ctx {
         };
         let enter = call("enter", to.0, to.1 + 30);
         std::thread::sleep(Duration::from_millis(60));
+        if let Some(f) = after_enter {
+            f();
+            std::thread::sleep(Duration::from_millis(200)); // the page acts on it before the drag moves on
+        }
         for k in 0..4 {
             let _ = call("over", to.0, to.1 + 30 - k * 10);
             std::thread::sleep(Duration::from_millis(30));
@@ -584,6 +602,28 @@ fn sc_several_files(ctx: &Ctx) -> Result<serde_json::Value, String> {
     let jpgs = outs.iter().filter(|o| o.to_lowercase().ends_with(".jpg") && image::open(o).is_ok()).count();
     check(done && jpgs == 3, &format!("{jpgs} of 3 JPGs written"))?;
     Ok(json!({ "jpgs": jpgs, "drop": drop, "rows": rows }))
+}
+
+/// Regression: the Explorer selection is only a guess made before the drag reaches the wheel. When it
+/// arrived after the exact dragged files and named a folder, the wheel rebuilt itself as the "folder"
+/// wheel (a lone ZIP slice), so dropping a PNG on the first slice made a ZIP instead of a JPG.
+fn sc_stale_selection_hint(ctx: &Ctx) -> Result<serde_json::Value, String> {
+    let dir = fresh_dir(ctx, "stale-hint");
+    let file = png_fixture(&dir, "stale.png", 20);
+    let folder = dir.join("Some folder");
+    let _ = std::fs::create_dir_all(&folder);
+    let geo = ctx.open_drag(&[LSHIFT])?;
+    // The wrong hint lands while the drag is over the wheel: right after DragEnter, before the drop.
+    let stale = folder.to_string_lossy().into_owned();
+    let inject = || crate::bridge::emit(&ctx.app, wheel::LABEL, "wheel:paths", json!([[stale.clone()]]));
+    let drop = ctx.drop_on_with(&geo, &[file], geo.slice0, false, Some(&inject))?;
+    let (done, outs, rows) = ctx.outputs(1, Duration::from_secs(20));
+    let jpg = outs.iter().any(|o| o.to_lowercase().ends_with(".jpg") && image::open(o).is_ok());
+    let zip = outs.iter().any(|o| o.to_lowercase().ends_with(".zip"));
+    check(done, "no job finished after the drop")?;
+    check(!zip, "the stale folder hint turned the wheel into the folder wheel (made a ZIP)")?;
+    check(jpg, "the first slice did not convert the PNG to JPG")?;
+    Ok(json!({ "drop": drop, "rows": rows }))
 }
 
 fn run_scenarios(app: &AppHandle, out: &std::path::Path, filter: &str, started: Instant) -> serde_json::Value {

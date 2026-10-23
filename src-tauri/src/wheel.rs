@@ -189,6 +189,12 @@ pub fn open(app: &AppHandle, kind: &str, mode: Mode, paths: Option<Vec<String>>)
     let _ = session;
 }
 
+/// True once the window's drop target has reported the exact dragged files for this opening. From then
+/// on the Explorer selection (a guess made before the drag reached the wheel) must not be used.
+pub fn drag_paths_known(app: &AppHandle) -> bool {
+    !app.state::<AppState>().wheel.inner.lock().unwrap().drag_paths.is_empty()
+}
+
 /// The page painted the opened wheel: record the open latency.
 pub fn shown(app: &AppHandle) {
     let st = app.state::<AppState>();

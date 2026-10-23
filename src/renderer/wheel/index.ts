@@ -220,6 +220,14 @@ orange.on(
     if (!wasOpen) {
       stage.classList.remove('landed');
       setPreview(null);
+      // A new drag starts from nothing: nothing carried over from the one before.
+      exactPaths = null;
+      selPaths = null;
+      dragCount = -1;
+      if (!o.paths) {
+        exts = [];
+        hasFolder = false;
+      }
     }
     if (o.paths) {
       knownPaths = o.paths;
@@ -242,6 +250,7 @@ orange.on('wheel:close', () => {
   show(false);
   hover = picked = -1;
   selPaths = null;
+  exactPaths = null;
   dragCount = -1;
 });
 
@@ -287,7 +296,13 @@ function applySelection() {
   return true;
 }
 
+// The exact dragged files, reported by the window's own drop target (Orange 2). They are the truth:
+// the Explorer selection below is only a quick guess made before the drag reaches the wheel, and
+// it can be slow or come from another Explorer tab, so it must never replace them.
+let exactPaths: string[] | null = null;
+
 orange.on('wheel:paths', (paths: string[]) => {
+  if (exactPaths) return;
   selPaths = paths;
   applySelection();
 });
@@ -348,6 +363,7 @@ orange.on('wheel:drag', (d: { type: 'enter' | 'over' | 'drop' | 'leave'; paths?:
   }
   if (d.type === 'drop') return dropAt(d.x, d.y, d.paths ?? []);
   if (d.type === 'enter' && d.paths && !knownPaths) {
+    exactPaths = d.paths;
     selPaths = d.paths;
     dragCount = d.paths.length;
     applySelection();
