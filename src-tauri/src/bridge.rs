@@ -43,6 +43,10 @@ pub async fn bridge_send(window: WebviewWindow, channel: String, args: Vec<Value
                 wheel::WheelState::trim_soon(&app);
             } else if label == "hud" {
                 hud::page_ready(&app);
+            } else if label == "shelf" || label == "clipboard" {
+                crate::shelf::page_ready(&app, &label); // [phase2-actions]
+            } else if label.starts_with("tool-") {
+                crate::tools::page_ready(&app, &label); // [phase2-tools]
             }
         }
         "wheel:choose" => {
@@ -61,8 +65,13 @@ pub async fn bridge_send(window: WebviewWindow, channel: String, args: Vec<Value
         "hud:hold" => hud::hold(&app, args.first().and_then(Value::as_u64).unwrap_or(0), args.get(1).and_then(Value::as_bool).unwrap_or(false)),
         "hud:reveal" => hud::reveal(&app, &arg_str(&args, 0)),
         "hud:open" => hud::open(&app, &arg_str(&args, 0)),
-        "hud:undo" => {}
+        "hud:undo" => crate::actions::undo(&app, args.first().and_then(Value::as_u64).unwrap_or(0)), // [phase2-actions]
+        // [phase2-actions] shelf and clipboard popover
+        other if (label == "shelf" || label == "clipboard") && crate::shelf::send(&app, &label, other, &args) => {}
         "log" => log::write(&format!("[{label}] {}", arg_str(&args, 0))),
+        other if crate::settings::handle_send(&app, &label, other) => {} // [phase2-settings]
+        // [phase2-tools]
+        other if label.starts_with("tool-") && crate::tools::send(&app, &window, other, &args) => {}
         other => log::write(&format!("bridge: unknown send {other} from {label}")),
     }
 }
@@ -70,9 +79,26 @@ pub async fn bridge_send(window: WebviewWindow, channel: String, args: Vec<Value
 #[tauri::command]
 pub async fn bridge_invoke(window: WebviewWindow, channel: String, args: Vec<Value>) -> Result<Value, String> {
     let app = window.app_handle();
+    // [phase2-tools] tool windows' native channels (file:reveal, theme:dark, tool:open).
+    if window.label().starts_with("tool-") {
+        if let Some(r) = crate::tools::invoke(app, &window, &channel, &args) {
+            return r;
+        }
+    }
+    // [phase2-actions] shelf thumbnails
+    if channel == "shelf:thumb" {
+        let p = arg_str(&args, 0);
+        return Ok(tauri::async_runtime::spawn_blocking(move || crate::shelf::thumb(&p)).await.unwrap_or_default().into());
+    }
+    // [phase2-settings] settings:*, presets:*, wheel:togglePin, dialog:folder, app:report, app:openLogs.
+    // Off the async runtime: the folder picker and the report block.
+    {
+        let (a, c, g) = (app.clone(), channel.clone(), args.clone());
+        if let Ok(Some(r)) = tauri::async_runtime::spawn_blocking(move || crate::settings::handle_invoke(&a, &c, &g)).await {
+            return r;
+        }
+    }
     match channel.as_str() {
-        "settings:keyNames" => Ok(json!({ "convert": "Shift", "tools": "Ctrl", "actions": "Alt" })),
-        "wheel:togglePin" => Ok(app.state::<AppState>().wheel.toggle_pin(&arg_str(&args, 0), &arg_str(&args, 1))),
         "app:version" => Ok(json!(app.package_info().version.to_string())),
         other => Err(format!("unknown channel {other}")),
     }

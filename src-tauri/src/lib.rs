@@ -3,19 +3,34 @@
 pub mod bridge;
 pub mod convert;
 pub mod drag;
+pub mod engines; // [phase2-convert] downloaded engines
 pub mod hooks;
 pub mod hud;
 pub mod jobs;
 pub mod log;
 #[cfg(feature = "selftest")]
 pub mod selftest;
+pub mod updater; // [phase2-updater]
 pub mod wheel;
 pub mod win;
+pub mod tools; // [phase2-tools]
+// [phase2-actions]
+pub mod actions;
+pub mod clipboard;
+pub mod explorer;
+pub mod shelf;
+// [phase2-settings]
+pub mod context_menu;
+pub mod diagnostics;
+pub mod presets;
+pub mod settings;
+pub mod shortcuts;
+pub mod watch;
 
 use drag::{Mod, Output};
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Manager, RunEvent, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Manager, RunEvent};
 
 #[derive(Default)]
 pub struct AppState {
@@ -51,28 +66,18 @@ pub fn set_low_memory(w: &tauri::WebviewWindow, low: bool) {
     });
 }
 
-/// Which wheel a modifier opens (Settings will make this configurable, as in 1.x).
-fn wheel_for(m: Mod) -> &'static str {
-    match m {
-        Mod::Shift => "convert",
-        Mod::Ctrl => "tools",
-        Mod::Alt => "actions",
-    }
+/// Which wheel a modifier opens: Settings > Shortcuts. [phase2-settings]
+fn wheel_for(m: Mod) -> Option<&'static str> {
+    use settings::ModKey;
+    settings::get().wheel_for_mod(match m {
+        Mod::Shift => ModKey::Shift,
+        Mod::Ctrl => ModKey::Ctrl,
+        Mod::Alt => ModKey::Alt,
+    })
 }
 
 fn open_settings(app: &AppHandle) {
-    if let Some(w) = app.get_webview_window("settings") {
-        let _ = w.unminimize();
-        let _ = w.show();
-        let _ = w.set_focus();
-        return;
-    }
-    let _ = WebviewWindowBuilder::new(app, "settings", WebviewUrl::App("renderer/settings/index.html".into()))
-        .title("Orange Settings")
-        .inner_size(520.0, 360.0)
-        .additional_browser_args(&browser_args())
-        .drag_and_drop(false)
-        .build();
+    settings::open_settings(app, None); // [phase2-settings]
 }
 
 /// Reacts to what the hooks saw. Runs on its own thread so the hook thread never waits.
@@ -82,8 +87,12 @@ fn spawn_event_loop(app: AppHandle, rx: std::sync::mpsc::Receiver<Output>) {
         .spawn(move || {
             for out in rx {
                 match out {
-                    Output::DragStart => {}
-                    Output::Modifier(m) => wheel::open(&app, wheel_for(m), wheel::Mode::Drag, None),
+                    Output::DragStart => explorer::drag_started(), // [phase2-actions]
+                    Output::Modifier(m) => {
+                        let Some(kind) = wheel_for(m) else { continue }; // [phase2-settings] key set to Off
+                        wheel::open(&app, kind, wheel::Mode::Drag, None);
+                        explorer::send_drag_selection(&app); // [phase2-actions]
+                    }
                     Output::Release => wheel::release_soon(&app),
                     Output::Nav(n) => wheel::nav(&app, n.name()),
                 }
@@ -95,7 +104,14 @@ fn spawn_event_loop(app: AppHandle, rx: std::sync::mpsc::Receiver<Output>) {
 fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     let settings = MenuItem::with_id(app, "settings", "Settings", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit Orange", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&settings, &quit])?;
+    // [phase2-actions]
+    let shelf_item = MenuItem::with_id(app, "shelf", "Show shelf", true, None::<&str>)?;
+    let clip_item = MenuItem::with_id(app, "clipboard", "Convert clipboard…", true, None::<&str>)?;
+    // [phase2-settings]
+    let howto = MenuItem::with_id(app, "howto", "How to use", true, None::<&str>)?;
+    let report = MenuItem::with_id(app, "report", "Report a problem…", true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&settings, &howto, &shelf_item, &clip_item, &report, &quit])?;
+    updater::attach_tray_menu(menu.clone()); // [phase2-updater] "Restart to update" is inserted when ready
     let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/tray.png"))?;
     TrayIconBuilder::with_id("main")
         .icon(icon)
@@ -105,6 +121,18 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
         .on_menu_event(|app, e| match e.id.as_ref() {
             "settings" => open_settings(app),
             "quit" => app.exit(0),
+            "howto" => settings::open_settings(app, Some("welcome")), // [phase2-settings]
+            "report" => {
+                let a = app.clone();
+                std::thread::spawn(move || {
+                    if let Err(e) = diagnostics::report_problem(&a) {
+                        log::write(&format!("report failed: {e}"));
+                    }
+                });
+            }
+            "shelf" => shelf::add(app, vec![]),             // [phase2-actions]
+            "clipboard" => clipboard::toggle(app),          // [phase2-actions]
+            updater::RESTART_ID => updater::restart_now(), // [phase2-updater]
             _ => {}
         })
         .on_tray_icon_event(|tray, e| {
@@ -120,18 +148,58 @@ pub fn run() {
     let started = std::time::Instant::now();
     let app = tauri::Builder::default()
         // A second launch opens Settings in the running instance instead of starting another.
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| open_settings(app)))
+        // [phase2-settings] ...unless it is an Explorer right-click launch: those gather into one wheel.
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            if !context_menu::handle_argv(app, &args) {
+                open_settings(app);
+            }
+        }))
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build()) // [phase2-settings]
+        .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, None)) // [phase2-settings]
+        .plugin(tauri_plugin_dialog::init()) // [phase2-settings]
+        .plugin(tauri_plugin_updater::Builder::new().build()) // [phase2-updater]
         .manage(AppState::default())
-        .invoke_handler(tauri::generate_handler![bridge::bridge_send, bridge::bridge_invoke])
+        // [phase2-tools] file IO for tool windows (http://ofs.localhost/...)
+        .register_asynchronous_uri_scheme_protocol("ofs", |_ctx, req, responder| {
+            std::thread::spawn(move || responder.respond(tools::protocol(req)));
+        })
+        .invoke_handler(tauri::generate_handler![
+            bridge::bridge_send,
+            bridge::bridge_invoke,
+            tools::tools_window, // [phase2-tools]
+            tools::tools_hud,
+            tools::tools_dialog,
+            tools::tools_info,
+            tools::tools_spawn,
+            tools::tools_engine,
+            tools::tools_engine_info,
+            tools::tools_kill
+        ])
         .setup(move |app| {
             let handle = app.handle().clone();
             if let Ok(dir) = handle.path().app_log_dir() {
                 log::init(dir);
             }
+            // [phase2-settings] panic capture; the settings store (imports 1.x on first start)
+            diagnostics::init(handle.path().app_log_dir().unwrap_or_default(), handle.path().app_config_dir().unwrap_or_default());
+            settings::init(handle.path().app_config_dir().unwrap_or_else(|_| std::env::temp_dir()));
+            engines::set_app(&handle); // [phase2-convert]
+            watch::set_runner(jobs::WatchRunner); // [phase2-convert]
             build_tray(&handle)?;
             let (tx, rx) = std::sync::mpsc::channel();
             hooks::start(tx);
+            // [phase2-actions] warm the Shell COM path; clipboard hotkey (Settings may change it)
+            explorer::warm_up();
+            // [phase2-settings] Both global shortcuts (Explorer selection, clipboard) are registered
+            // by shortcuts.rs from settings via tauri-plugin-global-shortcut, so clipboard.rs's own
+            // RegisterHotKey thread is not started (the two would fight over Control+Alt+V).
+            shortcuts::set_selection_provider(explorer::selection);
+            shortcuts::set_clipboard_action(clipboard::toggle);
             spawn_event_loop(handle.clone(), rx);
+            updater::start(&handle); // [phase2-updater]
+            tools::maybe_test(&handle); // [phase2-tools] ORANGE_TOOL_TEST: off-screen tool window runs
+            settings::start(&handle); // [phase2-settings] shortcuts, autostart, Explorer menu, watch folders
+            context_menu::handle_argv(&handle, &std::env::args().collect::<Vec<_>>()); // [phase2-settings]
             log::write(&format!("tray and hooks up in {:.1} ms", started.elapsed().as_secs_f64() * 1000.0));
             // The wheel's webview takes a few hundred ms to create; do it after the tray is up so
             // start-up isn't held for it. It is ready long before anyone can start a drag.
@@ -149,6 +217,12 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building Orange");
     app.run(|_app, e| {
+        // [phase2-updater] A downloaded update installs as Orange quits (1.x behaviour).
+        if matches!(e, RunEvent::Exit) {
+            watch::stop(); // [phase2-settings]
+            shortcuts::unregister_all(_app);
+            updater::install_on_quit();
+        }
         // Orange lives in the tray: closing its last window must not quit it.
         if let RunEvent::ExitRequested { code: None, api, .. } = e {
             api.prevent_exit();

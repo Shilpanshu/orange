@@ -25,7 +25,22 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 webview2-com = "0.39"
 # Only the codecs phase 1 needs. Each extra codec adds to the binary.
-image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif", "bmp", "ico", "tiff"] }
+# [phase2-convert] engine download checks and PDF/ZIP writing.
+sha2 = "0.10"
+flate2 = "1"
+# Windows' own TLS (schannel) instead of bundling rustls + ring: smaller exe, and it uses the system certificate store and proxy.
+tauri-plugin-updater = { version = "2", default-features = false, features = ["native-tls", "system-proxy", "zip"] }
+zip = { version = "2", default-features = false, features = ["deflate"] }
+# Phase 2 settings and automation (settings, shortcuts, watch, diagnostics).
+tauri-plugin-global-shortcut = "2"
+tauri-plugin-autostart = "2"
+tauri-plugin-dialog = "2"
+notify = { version = "8", default-features = false }
+# [phase2-tools] native file dialogs for tool windows (already in the tree via tauri-plugin-dialog)
+rfd = "0.16"
+# [phase2-actions] WinRT collections for the share sheet (same version the windows crate uses)
+windows-collections = "0.3"
 
 [dependencies.windows]
 version = "0.62"
@@ -35,6 +50,19 @@ features = [
   "Win32_System_Com",
   "Win32_System_LibraryLoader",
   "Win32_System_Ole",
+  "Win32_System_Registry",
+  "Win32_Security",
+  "Win32_System_DataExchange",
+  "Win32_System_Memory",
+  "Win32_System_Variant",
+  "Win32_Storage_FileSystem",
+  # Phase 2 actions/shelf/clipboard/explorer: share sheet (WinRT) and shell interop.
+  "Win32_System_WinRT",
+  "Foundation_Collections",
+  "Storage",
+  "ApplicationModel_DataTransfer",
+  "Storage_Streams",
+  "Storage_Search",
   "Win32_System_SystemServices",
   "Win32_System_Threading",
   "Win32_UI_HiDpi",

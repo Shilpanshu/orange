@@ -23,21 +23,20 @@ export function copyImageAssets(root, out) {
   // Only the SIMD build: FilesetResolver picks it whenever WebAssembly SIMD validates, which it always
   // does in Electron's Chromium (SIMD shipped in Chrome 91), so the ~13 MB no-SIMD build is never loaded.
   const mp = join(out, 'vendor/mediapipe');
-  for (const f of ['vision_wasm_internal.js', 'vision_wasm_internal.wasm']) {
-    copy(`@mediapipe/tasks-vision/wasm/${f}`, mp);
-  }
-  for (const f of ['vision_wasm_nosimd_internal.js', 'vision_wasm_nosimd_internal.wasm']) rmSync(join(mp, f), { force: true });
+  // Only the small loader script ships; the 13 MB .wasm downloads on first use (src-tauri/src/engines.rs "mediapipe").
+  copy('@mediapipe/tasks-vision/wasm/vision_wasm_internal.js', mp);
+  for (const f of ['vision_wasm_nosimd_internal.js', 'vision_wasm_nosimd_internal.wasm', 'vision_wasm_internal.wasm']) rmSync(join(mp, f), { force: true });
 
   const ts = join(out, 'vendor/tesseract');
   copy('tesseract.js/dist/worker.min.js', ts);
   // LSTM-only cores (the page asks for OEM 1). tesseract.js picks relaxed-SIMD, then SIMD, then plain by
   // feature detection; Electron's Chromium has relaxed SIMD (Chrome 114+), so the plain build is dropped
   // and the SIMD one is kept only as the next step down.
-  for (const f of ['tesseract-core-simd-lstm.wasm.js', 'tesseract-core-relaxedsimd-lstm.wasm.js']) {
-    copy(`tesseract.js-core/${f}`, ts);
-  }
-  rmSync(join(ts, 'tesseract-core-lstm.wasm.js'), { force: true });
-  copy('@tesseract.js-data/eng/4.0.0_best_int/eng.traineddata.gz', join(ts, 'lang'));
+  // Only the relaxed-SIMD core ships (WebView2 is Chromium 114+, which has it); the plain SIMD core would add
+  // about 1.7 MB to the exe for runtimes that no longer exist.
+  copy('tesseract.js-core/tesseract-core-relaxedsimd-lstm.wasm.js', ts);
+  for (const f of ['tesseract-core-simd-lstm.wasm.js', 'tesseract-core-lstm.wasm.js']) rmSync(join(ts, f), { force: true });
+  // English data (3 MB) is not shipped: it downloads on first use (src-tauri/src/engines.rs "tesseract-eng").
 }
 
 if (import.meta.url === `file:///${process.argv[1]?.replace(/\\/g, '/')}` || process.argv[1]?.endsWith('build-assets-image.mjs')) {

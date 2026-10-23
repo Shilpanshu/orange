@@ -51,6 +51,9 @@ pub struct HudState {
     page_ready: AtomicBool,
     /// Every finished job, for the self-test.
     pub finished: Mutex<Vec<Row>>,
+    /// Bumped each time a row is finished again (after Undo), so an older linger timer doesn't
+    /// dismiss the newer state early. [phase2-actions]
+    finish_gen: Mutex<BTreeMap<u64, u64>>,
 }
 
 fn st(app: &AppHandle) -> tauri::State<'_, AppState> {
@@ -174,7 +177,17 @@ impl Job {
         }
         flush(&self.app, false);
     }
+    /// Finished. As in 1.x, Undo then moves the new files to the Recycle Bin. [phase2-actions]
     pub fn done(&self, outputs: Vec<String>, errors: Vec<String>) {
+        let undo = (!outputs.is_empty()).then(|| crate::actions::Undo::Trash(outputs.clone()));
+        self.done_with_undo(outputs, errors, undo);
+    }
+    /// Finished, with a custom Undo (Move puts files back), or `None` for no Undo button.
+    pub fn done_with_undo(&self, outputs: Vec<String>, errors: Vec<String>, undo: Option<crate::actions::Undo>) {
+        let undoable = undo.is_some();
+        if let Some(u) = undo {
+            crate::actions::register_undo(self.id, u);
+        }
         let linger = if errors.is_empty() { 8000 } else { 12000 };
         finish(&self.app, self.id, linger, |r| {
             r.state = RowState::Done;
@@ -182,6 +195,7 @@ impl Job {
             r.note = None;
             r.outputs = Some(outputs);
             r.errors = Some(errors);
+            r.undoable = undoable;
         });
     }
     pub fn failed(&self, msg: &str) {
@@ -210,10 +224,19 @@ fn finish(app: &AppHandle, id: u64, linger_ms: u64, patch: impl FnOnce(&mut Row)
         hud.finished.lock().unwrap().push(r.clone());
     }
     hud.cancels.lock().unwrap().remove(&id);
+    let gen = {
+        let mut g = hud.finish_gen.lock().unwrap();
+        let e = g.entry(id).or_insert(0);
+        *e += 1;
+        *e
+    };
     flush(app, true);
     let app = app.clone();
     std::thread::spawn(move || {
         std::thread::sleep(Duration::from_millis(linger_ms));
+        if st(&app).hud.finish_gen.lock().unwrap().get(&id).is_some_and(|g| *g != gen) {
+            return; // finished again since (Undo): that timer owns the row now
+        }
         // A row under the pointer stays until the pointer leaves it.
         while st(&app).hud.held.lock().unwrap().contains(&id) {
             std::thread::sleep(Duration::from_millis(250));
@@ -222,8 +245,26 @@ fn finish(app: &AppHandle, id: u64, linger_ms: u64, patch: impl FnOnce(&mut Row)
     });
 }
 
+/// Undo finished (`Ok(title)`) or failed: the row says so briefly. [phase2-actions]
+pub fn undone(app: &AppHandle, id: u64, r: Result<String, String>) {
+    match r {
+        Ok(title) => finish(app, id, 3500, |row| {
+            row.state = RowState::Notice;
+            row.title = title;
+            row.undoable = false;
+        }),
+        Err(e) => finish(app, id, 8000, |row| {
+            row.state = RowState::Failed;
+            row.note = Some(format!("Couldn't undo: {e}"));
+            row.undoable = false;
+        }),
+    }
+}
+
 pub fn dismiss(app: &AppHandle, id: u64) {
+    crate::actions::forget_undo(id); // [phase2-actions]
     let hud = &st(app).hud;
+    hud.finish_gen.lock().unwrap().remove(&id);
     hud.rows.lock().unwrap().remove(&id);
     hud.held.lock().unwrap().remove(&id);
     flush(app, true);

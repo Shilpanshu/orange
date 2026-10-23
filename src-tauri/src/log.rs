@@ -19,6 +19,7 @@ pub fn write(msg: &str) {
     eprint!("{line}");
     let Some(p) = PATH.get() else { return };
     let _g = LOCK.lock();
+    crate::diagnostics::maybe_rotate(p); // [phase2-settings] ~5 MB cap, one orange.old.log
     if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(p) {
         let _ = f.write_all(line.as_bytes());
     }

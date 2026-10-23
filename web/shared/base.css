@@ -1,0 +1,127 @@
+:root {
+  --font: 'Segoe UI Variable Text', 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif;
+  --font-display: 'Segoe UI Variable Display', 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif;
+  --mono: 'Cascadia Mono', 'Cascadia Code', Consolas, monospace;
+
+  --accent: #ee6a1f;
+  /* Text and hover colour on light surfaces; 4.5:1 or better on --surface, --bg and --accent-soft. */
+  --accent-strong: #b84a0a;
+  --accent-soft: #fde6d6;
+  /* Filled primary buttons: --accent-ink on --accent-fill passes 4.5:1 in both themes. */
+  --accent-fill: #c24e0c;
+  --accent-fill-hover: #a9440a;
+  --accent-ink: #ffffff;
+
+  --bg: #f6f3ef;
+  --surface: #fffdfa;
+  --surface-2: #f0ece6;
+  --surface-3: #e6e0d8;
+  --line: #ddd6cc;
+  --line-strong: #c7bfb3;
+  --ink: #1f1b16;
+  --ink-2: #5d554b;
+  --ink-3: #6f665c;
+  --danger: #c8342b;
+  --ok: #2f7d4f;
+  --focus: color-mix(in srgb, var(--accent) 70%, var(--ink));
+
+  --radius: 8px;
+  --radius-sm: 6px;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --accent: #ff7a2e;
+    --accent-strong: #ff8f4f;
+    --accent-soft: #3d2416;
+    --bg: #1a1816;
+    --surface: #23201d;
+    --surface-2: #2c2925;
+    --surface-3: #37332e;
+    --line: #3a3631;
+    --line-strong: #4d4842;
+    --ink: #f3eee8;
+    --ink-2: #bdb4a9;
+    --ink-3: #a0978b;
+    --accent-fill: #ff7a2e;
+    --accent-fill-hover: #ff8f4f;
+    --accent-ink: #1a1816;
+    --danger: #ff6b5e;
+    --ok: #5cb57f;
+    --focus: #ffa66e;
+    color-scheme: dark;
+  }
+}
+:root[data-theme='dark'] {
+  --accent: #ff7a2e;
+  --accent-strong: #ff8f4f;
+  --accent-soft: #3d2416;
+  --bg: #1a1816;
+  --surface: #23201d;
+  --surface-2: #2c2925;
+  --surface-3: #37332e;
+  --line: #3a3631;
+  --line-strong: #4d4842;
+  --ink: #f3eee8;
+  --ink-2: #bdb4a9;
+  --ink-3: #a0978b;
+  --accent-fill: #ff7a2e;
+  --accent-fill-hover: #ff8f4f;
+  --accent-ink: #1a1816;
+  --danger: #ff6b5e;
+  --ok: #5cb57f;
+  --focus: #ffa66e;
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+html,
+body {
+  margin: 0;
+  font-family: var(--font);
+  font-size: 13px;
+  color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+}
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+/* One focus ring for every window: keyboard focus only, never on mouse clicks. */
+:focus {
+  outline: none;
+}
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+::selection {
+  background: color-mix(in srgb, var(--accent) 30%, transparent);
+}
+input,
+textarea {
+  caret-color: var(--accent);
+}
+
+/* Motion is short and purposeful already; with reduced motion it stops altogether.
+   Loops (shimmer, indeterminate bars) freeze on a still frame, state changes are instant. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    animation-delay: 0s !important;
+    transition-duration: 1ms !important;
+    transition-delay: 0s !important;
+    scroll-behavior: auto !important;
+  }
+}

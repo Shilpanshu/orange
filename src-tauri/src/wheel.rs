@@ -2,7 +2,7 @@
 //! cursor on demand, so opening it costs a SetWindowPos and a show.
 
 use crate::{bridge, hooks, log, win, AppState};
-use serde_json::{json, Map, Value};
+use serde_json::{json, Value};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -20,8 +20,6 @@ pub enum Mode {
 
 #[derive(Default)]
 struct Inner {
-    favorites: Map<String, Value>,
-    recents: Map<String, Value>,
     opened_at: Option<Instant>,
     /// Paths reported by the drop target while a drag hovers the wheel.
     drag_paths: Vec<String>,
@@ -75,25 +73,17 @@ impl WheelState {
         self.open.load(Ordering::SeqCst)
     }
 
+    // [phase2-settings] Pins, recents and presets live in settings (persisted), not in memory.
     fn prefs(&self) -> Value {
-        let i = self.inner.lock().unwrap();
-        json!({ "favorites": i.favorites, "recents": i.recents, "presets": [] })
+        crate::presets::wheel_prefs(&crate::settings::get())
     }
 
     pub fn toggle_pin(&self, key: &str, item: &str) -> Value {
-        let mut i = self.inner.lock().unwrap();
-        let list = i.favorites.entry(key.to_string()).or_insert_with(|| json!([]));
-        let arr = list.as_array_mut().unwrap();
-        let before = arr.len();
-        arr.retain(|v| v.as_str() != Some(item));
-        if arr.len() == before {
-            arr.push(json!(item));
-        }
-        Value::Object(i.favorites.clone())
+        crate::presets::toggle_pin(crate::settings::store(), key, item)
     }
 
     pub fn remember_recent(&self, ext: &str, item: &str) {
-        self.inner.lock().unwrap().recents.insert(ext.to_string(), json!(item));
+        crate::presets::remember_recent(crate::settings::store(), ext, item)
     }
 }
 

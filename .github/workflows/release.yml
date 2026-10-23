@@ -7,7 +7,8 @@ name: Release
 
 on:
   push:
-    tags: ['v*']
+    # 2.x tags are built by release-v2.yml.
+    tags: ['v*', '!v2.*']
   workflow_dispatch:
 
 permissions:
