@@ -3,3 +3,6 @@ dist/
 release/
 vendor/bin/
 *.log
+
+# Agent worktrees
+.claude/
