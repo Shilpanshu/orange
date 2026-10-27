@@ -16,21 +16,50 @@ It's a Windows take on the drag-and-tap idea of the Mac app Tangerine, built fro
 
 ## Install
 
-1. Download `Orange-Setup-<version>.exe` from the [latest release](https://github.com/Shilpanshu/orange/releases/latest).
-2. Run it. It installs for your user account only, with no administrator prompt.
-3. Orange starts and a short guide opens once.
+1. Download `Orange_<version>_x64-setup.exe` from the [latest release](https://github.com/Shilpanshu/orange/releases/latest).
+2. Run it. It installs for your user account only, with no administrator prompt, in a few seconds.
+3. Orange starts in the notification area. Open **Settings → How it works** (tray icon) for a short guide.
 
-> If Windows SmartScreen says "Windows protected your PC", choose **More info → Run anyway**. That warning appears for installers without a code-signing certificate; see [Code signing](#code-signing).
+> If Windows SmartScreen says "Windows protected your PC", choose **More info → Run anyway**. The installer is not Authenticode-signed yet, which is what triggers that warning. Updates are separately signed, so Orange only ever installs genuine ones.
 
 Orange updates itself from GitHub Releases. New versions download in the background and install the next time you quit.
 
-Requires Windows 10 or 11, 64-bit. The installer is about 210 MB and Orange takes about 490 MB on disk.
+**Upgrading from Orange 1.x:** just install 2.0. It removes 1.x (including its right-click menu and start-with-Windows entry) and carries over your settings.
 
-What happens the first time you use some features:
+Requires Windows 10 or 11, 64-bit, with the Microsoft Edge WebView2 runtime. That is already part of current Windows; the installer fetches it if it is missing.
 
-- **Video and audio:** the first job unpacks the video engine once (about a second), offline.
-- **Documents:** the first document conversion unpacks Pandoc once (about a second and a half), offline.
-- **AI tools** (Remove background, Upscale, Subtitles): the AI engine (about 114 MB) and the tool's model download once, then work offline. OCR in English works offline from the start.
+The installer is about 6 MB and Orange takes about 10 MB on disk. It uses roughly 120 MB of memory while it sits in the tray, most of it the WebView2 browser engine.
+
+### Downloaded the first time you need it
+
+To stay small, Orange does not ship the heavy engines. Each one downloads the first time a feature needs it, with a progress row and a Cancel button in the corner panel, is checked against a known fingerprint, and then works offline.
+
+| What | Size | Needed for |
+| --- | --- | --- |
+| FFmpeg | 35 MB | Video and audio |
+| Pandoc | 41 MB | Documents, EPUB, Markdown |
+| Ghostscript | 20 MB | PDF to images and text, and PDF compress |
+| ImageMagick | 12 MB | HEIC, AVIF, TIFF and WebP output |
+| 7-Zip | 2 MB | Archives, including RAR |
+| AI engine | 27 MB | Remove background, Upscale, Subtitles (the model downloads too, see [AI tools](#ai-tools-run-on-your-pc)) |
+| Face detection | 14 MB | Redact: Find faces |
+| English text data | 3 MB | OCR and Redact: Find text |
+
+Some things need nothing at all: reading PNG, JPEG, GIF, BMP, ICO and TIFF; writing JPG, PNG, BMP and PDF; subtitles; CSV, XLSX and ODS; and turning web pages into PDF (it uses the Edge that comes with Windows).
+
+## What's new in 2.0
+
+Orange is rebuilt on [Tauri](https://tauri.app) instead of Electron. The tools, the wheel and the settings are the same; what changed is how heavy it is.
+
+| | 1.2.2 | 2.0 |
+| --- | --- | --- |
+| Installer | 210 MB | **6 MB** |
+| On disk | 490 MB | **10 MB** |
+| Memory in the tray | about 190 MB | **about 120 MB** |
+
+- **The wheel knows exactly what you are dragging.** Windows reports the dragged files to the wheel itself, so the slices, the file name and the thumbnail always match the file. A guess from Explorer is only used until then, and never overrides it.
+- **Engines download on first use** instead of shipping in the installer (table above). The first video, document or AI job needs an internet connection once.
+- **Smaller differences from 1.x:** a PDF made from a web page or document has no "page n of N" footer; an image converted to PDF is sized at 72 dpi; converting to WebP, TIFF or AVIF downloads ImageMagick the first time.
 
 ## What's new in 1.2.2
 
@@ -144,7 +173,11 @@ Subtitles can be saved as SRT, VTT or plain text, burned into a copy of the vide
 
 ## Privacy
 
-Everything runs on your PC. Orange never uploads your files, collects no analytics and has no account. It only goes online to check GitHub for updates, to download an AI model or OCR language the first time you use it, and, if you ask, to download LibreOffice.
+Everything runs on your PC. Orange never uploads your files, collects no analytics and has no account. It only goes online to:
+
+- check GitHub for updates;
+- download an engine, an AI model or an OCR language the first time you use it (from gyan.dev, SourceForge, PyPI, conda-forge, jsDelivr or Hugging Face, depending on what it is);
+- download LibreOffice, if you ask for it in **Settings → Engines**.
 
 ## Something went wrong?
 
@@ -154,81 +187,91 @@ Right-click the tray icon and choose **Report a problem…**. Orange saves a zip
 
 ## Building from source
 
-You need Windows 10 or 11 (x64), Node.js 22 or newer, and Git.
+You need Windows 10 or 11 (x64) and:
+
+- [Rust](https://rustup.rs) (stable) and the Visual Studio C++ Build Tools,
+- Node.js 22 or newer (it bundles the web pages with esbuild),
+- Git.
 
 ```powershell
 git clone https://github.com/Shilpanshu/orange.git
 cd orange
 npm install
-npm run vendor     # downloads FFmpeg, 7-Zip, ImageMagick, Pandoc and Ghostscript into vendor/bin
-npm start          # builds and runs Orange
+cargo install tauri-cli --version "^2" --locked
+cd src-tauri
+cargo tauri dev            # builds and runs Orange
 ```
 
-The bundled tools are not in Git because of their size (about 450 MB). `npm run vendor` is safe to run again; it skips anything already present.
+Nothing heavy is bundled, so there is nothing else to download: engines fetch themselves the first time you use a feature, into `%LOCALAPPDATA%\app.orange.converter\engines`.
 
-> If you run Orange from inside VS Code's terminal and it immediately exits, the `ELECTRON_RUN_AS_NODE` variable is set. Remove it first: `Remove-Item Env:ELECTRON_RUN_AS_NODE`.
+> `cargo tauri dev` uses the same identifier as an installed Orange. Quit the installed copy first, or set `ORANGE_USER_DATA` to a scratch folder to keep your real settings out of it.
+
+### Run the tests
+
+```powershell
+cd src-tauri
+cargo test --tests                       # unit and integration tests
+node ../tests/run-v2.mjs --selftest      # also drives the wheel through its real drop target
+```
+
+The self-test never moves your mouse or presses keys: it feeds events to the same state machine the global hooks use and calls the wheel's own OLE drop target in-process.
 
 ### Make the installer
 
 ```powershell
-npm run dist       # writes release/Orange-Setup-<version>.exe
+cd src-tauri
+cargo tauri build --bundles nsis         # writes target/release/bundle/nsis/
 ```
 
 ### Publish a release
 
-Bump `version` in `package.json`, then:
+Releases are built by GitHub, not on your PC. Bump `version` in `src-tauri/tauri.conf.json` and `src-tauri/Cargo.toml`, then push a tag:
 
 ```powershell
-$env:GH_TOKEN = '<a GitHub token with repo scope>'
-npm run release
+git tag v2.0.1
+git push origin v2.0.1
 ```
 
-This uploads the installer and `latest.yml` to a GitHub release. Installed copies pick up the update automatically within a few hours.
-
-### Code signing
-
-`npm run dist` and `npm run release` sign automatically when credentials are present in the environment:
-
-- **Azure Trusted Signing** (cheapest for individuals): set `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`, `AZURE_SIGN_ENDPOINT`, `AZURE_SIGN_ACCOUNT`, `AZURE_SIGN_PROFILE` and `AZURE_SIGN_PUBLISHER` (the certificate subject name).
-- **A .pfx certificate:** set `CSC_LINK` (file path or base64) and `CSC_KEY_PASSWORD`.
-
-With neither set, the build is unsigned and SmartScreen warns on first install.
+The `Release v2` workflow tests, builds, signs and publishes the installer together with `latest.json`, which the in-app updater reads. It needs two repository secrets, `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` (the update signing key; keep a copy somewhere safe, because installed copies can only update from releases signed with it). See [docs/MIGRATION.md](docs/MIGRATION.md).
 
 ### Project layout
 
 ```
-src/main/            Electron main process
-  drag-watcher.ts    global mouse/keyboard hooks: "dragging + tapped a key"
-  wheel.ts           the transparent radial menu window
-  jobs.ts            routes a choice to a converter, tool or action; progress and cancel
-  ops/               converters (convert-*.ts) and tools (tools-*.ts)
-  engines/           wrappers for FFmpeg, Office/LibreOffice, Pandoc, HEIF
-  updater.ts         auto-update from GitHub Releases
-  diagnostics.ts     crash capture and "Report a problem"
-src/renderer/        wheel, progress panel, settings, shelf and tool windows (no framework)
-src/shared/catalog.ts  which formats, tools and actions apply to which files
-src/helper/          small C# helper: Explorer selection, file clipboard, share sheet
-scripts/             build, vendor download, installer and test scripts
+src-tauri/src/        the app, in Rust
+  hooks.rs, drag.rs   global mouse/keyboard hooks and the "dragging + tapped a key" state machine
+  wheel.rs            the transparent radial menu window and its OLE drop target
+  hud.rs, jobs.rs     the corner progress panel; routes a choice to a converter, tool or action
+  convert/            converters: image, AV, documents (PDF, Office, sheets), archives, subtitles
+  engines.rs          downloads and verifies FFmpeg, Pandoc, Ghostscript, ImageMagick, 7-Zip
+  tools.rs            native side of the tool windows
+  actions.rs, shelf.rs, clipboard.rs, explorer.rs   share, float shelf, clipboard, Explorer selection
+  settings.rs, presets.rs, watch.rs, context_menu.rs, shortcuts.rs   settings and automation
+  updater.rs, diagnostics.rs   signed auto-update; logs and "Report a problem"
+src-tauri/tests/      integration tests
+web/                  tool windows, settings, shelf and clipboard pages (no framework)
+src/renderer/         the wheel and the corner panel
+src/shared/catalog.ts which formats, tools and actions apply to which files
+scripts/              web bundling and test scripts
 ```
 
 ## Third-party software
 
-Orange ships these programs unmodified, each under its own licence. Their licence files are installed alongside them in `resources/bin`.
+Orange downloads these programs unmodified on first use, each under its own licence, and does not redistribute them in its installer.
 
 | Component | Used for | Licence |
 | --- | --- | --- |
+| [Tauri](https://tauri.app), [WebView2](https://developer.microsoft.com/microsoft-edge/webview2/) | The app shell and its windows (WebView2 is part of Windows) | MIT / Apache 2.0, Microsoft redistributable |
 | [FFmpeg](https://ffmpeg.org) (gyan.dev essentials build) | Video and audio | GPL v3 |
-| [ImageMagick](https://imagemagick.org) | HEIC, BMP and other image formats | ImageMagick License |
-| [libvips](https://www.libvips.org) via [sharp](https://sharp.pixelplumbing.com) | Fast image processing | LGPL v2.1 / Apache 2.0 |
+| [ImageMagick](https://imagemagick.org) | HEIC, AVIF, TIFF and WebP | ImageMagick License |
 | [7-Zip](https://www.7-zip.org) | Archives | LGPL v2.1 + unRAR restriction |
 | [Pandoc](https://pandoc.org) | Document conversion | GPL v2+ |
 | [Ghostscript](https://www.ghostscript.com) | PDF rendering and compression | AGPL v3 |
 | [pdf-lib](https://pdf-lib.js.org), [PDF.js](https://mozilla.github.io/pdf.js/) | PDF tools | MIT, Apache 2.0 |
-| [Tesseract.js](https://tesseract.projectnaptha.com), [MediaPipe](https://ai.google.dev/edge/mediapipe) | Offline text and face detection, OCR | Apache 2.0 |
-| [Transformers.js](https://huggingface.co/docs/transformers.js), [ONNX Runtime](https://onnxruntime.ai) | Running AI models locally (CPU or DirectML) | Apache 2.0, MIT |
-| [Whisper](https://github.com/openai/whisper) models | Subtitles (downloaded on first use) | MIT |
-| [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN) models | Upscale (downloaded on first use) | BSD 3-Clause, MIT |
-| [BRIA RMBG-1.4](https://huggingface.co/briaai/RMBG-1.4) | Remove background (downloaded on first use) | BRIA RMBG-1.4 licence (non-commercial) |
+| [Tesseract.js](https://tesseract.projectnaptha.com), [MediaPipe](https://ai.google.dev/edge/mediapipe) | OCR, text and face detection | Apache 2.0 |
+| [Transformers.js](https://huggingface.co/docs/transformers.js), [ONNX Runtime Web](https://onnxruntime.ai) | Running AI models locally (WebGPU or CPU) | Apache 2.0, MIT |
+| [Whisper](https://github.com/openai/whisper) models | Subtitles | MIT |
+| [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN) models | Upscale | BSD 3-Clause, MIT |
+| [BRIA RMBG-1.4](https://huggingface.co/briaai/RMBG-1.4) | Remove background | BRIA RMBG-1.4 licence (non-commercial) |
 
 ## Licence
 

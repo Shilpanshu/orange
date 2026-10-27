@@ -140,7 +140,7 @@ fn on_drag(app: &AppHandle, d: &DragDropEvent) {
         DragDropEvent::Enter { paths, position } => {
             let paths: Vec<String> = paths.iter().map(|p| p.to_string_lossy().into_owned()).collect();
             st.wheel.inner.lock().unwrap().drag_paths = paths.clone();
-            send_preview(app, paths.clone());
+            send_preview(app, paths.clone(), false);
             json!({ "type": "enter", "paths": paths, "x": position.x / scale, "y": position.y / scale })
         }
         DragDropEvent::Over { position } => json!({ "type": "over", "x": position.x / scale, "y": position.y / scale }),
@@ -184,7 +184,7 @@ pub fn open(app: &AppHandle, kind: &str, mode: Mode, paths: Option<Vec<String>>)
         win::show_no_activate(hwnd, mode == Mode::Click);
     }
     if let Some(p) = paths {
-        send_preview(app, p);
+        send_preview(app, p, false);
     }
     // Diagnostic: once the drag is over the wheel Windows reports the exact dragged files within a few
     // milliseconds. If they have not arrived after 700 ms, the wheel is working from a guess; say which
@@ -267,7 +267,9 @@ pub fn close(app: &AppHandle) {
 }
 
 /// An Explorer-style thumbnail for the hub, made off the UI thread.
-fn send_preview(app: &AppHandle, paths: Vec<String>) {
+/// Sends the hub's file name and thumbnail. `guess` marks a preview made from the Explorer selection
+/// (a guess): it is dropped if the exact dragged files were reported while its thumbnail was built.
+pub(crate) fn send_preview(app: &AppHandle, paths: Vec<String>, guess: bool) {
     let Some(first) = paths.first().cloned() else { return };
     let st = app.state::<AppState>();
     let session = st.wheel.session.load(Ordering::SeqCst);
@@ -276,7 +278,7 @@ fn send_preview(app: &AppHandle, paths: Vec<String>) {
         let thumb = win::thumbnail_data_url(&first, 96).unwrap_or_default();
         let name = std::path::Path::new(&first).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
         let st = app.state::<AppState>();
-        if st.wheel.is_open() && st.wheel.session.load(Ordering::SeqCst) == session {
+        if st.wheel.is_open() && st.wheel.session.load(Ordering::SeqCst) == session && !(guess && drag_paths_known(&app)) {
             bridge::emit(&app, LABEL, "wheel:preview", json!([{ "thumb": thumb, "name": name, "count": paths.len() }]));
         }
     });

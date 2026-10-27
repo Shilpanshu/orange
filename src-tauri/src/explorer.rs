@@ -595,6 +595,9 @@ pub fn send_drag_selection(app: &tauri::AppHandle) {
             return;
         }
         crate::log::write(&format!("explorer selection hint: {paths:?}"));
+        // Show the file name and thumbnail now rather than after the pointer first moves (Windows
+        // only reports the exact dragged files then). The exact files replace this when they arrive.
+        crate::wheel::send_preview(&app, paths.clone(), true);
         crate::bridge::emit(&app, crate::wheel::LABEL, "wheel:paths", serde_json::json!([paths]));
     });
 }
