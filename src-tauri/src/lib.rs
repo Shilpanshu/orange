@@ -3,6 +3,7 @@
 pub mod bridge;
 pub mod convert;
 pub mod drag;
+pub mod droptarget;
 pub mod engines; // [phase2-convert] downloaded engines
 pub mod hooks;
 pub mod hud;

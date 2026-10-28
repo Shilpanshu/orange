@@ -47,6 +47,10 @@ To stay small, Orange does not ship the heavy engines. Each one downloads the fi
 
 Some things need nothing at all: reading PNG, JPEG, GIF, BMP, ICO and TIFF; writing JPG, PNG, BMP and PDF; subtitles; CSV, XLSX and ODS; and turning web pages into PDF (it uses the Edge that comes with Windows).
 
+## 2.0.0-beta.5
+
+Fixes the wheel not reacting to a drop: on some PCs WebView2 took over the wheel's drop handling, so Orange never learned which files were dragged and the wheel just stayed open. Orange now registers its own drop handler each time the wheel opens.
+
 ## 2.0.0-beta.4
 
 Updates now arrive on networks that block GitHub's file server (release-assets.githubusercontent.com). Each release is also published on GitHub Pages, which Orange tries first, and a failed update check is retried after 20 minutes instead of 6 hours.

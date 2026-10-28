@@ -129,27 +129,43 @@ pub fn create(app: &AppHandle) -> tauri::Result<WebviewWindow> {
     Ok(w)
 }
 
-/// The OLE drop target (wry registers one on the webview's child windows) reports the exact
-/// dragged paths on enter, then positions. Positions are physical client pixels; the page works
-/// in CSS pixels.
+/// A drag over the wheel, in physical client pixels.
+pub enum DropEv {
+    Enter(Vec<String>, f64, f64),
+    Over(f64, f64),
+    Drop(Vec<String>, f64, f64),
+    Leave,
+}
+
+/// wry's drop target (registered when the window is created).
 fn on_drag(app: &AppHandle, d: &DragDropEvent) {
+    let p = |paths: &Vec<std::path::PathBuf>| paths.iter().map(|p| p.to_string_lossy().into_owned()).collect::<Vec<_>>();
+    let ev = match d {
+        DragDropEvent::Enter { paths, position } => DropEv::Enter(p(paths), position.x, position.y),
+        DragDropEvent::Over { position } => DropEv::Over(position.x, position.y),
+        DragDropEvent::Drop { paths, position } => DropEv::Drop(p(paths), position.x, position.y),
+        DragDropEvent::Leave => DropEv::Leave,
+        _ => return,
+    };
+    on_drop_event(app, ev);
+}
+
+/// The OLE drop target (Orange's own from `droptarget.rs`, or wry's) reports the exact dragged
+/// paths on enter, then positions. Positions are physical client pixels; the page works in CSS
+/// pixels.
+pub fn on_drop_event(app: &AppHandle, d: DropEv) {
     let Some(w) = app.get_webview_window(LABEL) else { return };
     let scale = w.scale_factor().unwrap_or(1.0);
     let st = app.state::<AppState>();
     let payload = match d {
-        DragDropEvent::Enter { paths, position } => {
-            let paths: Vec<String> = paths.iter().map(|p| p.to_string_lossy().into_owned()).collect();
+        DropEv::Enter(paths, x, y) => {
             st.wheel.inner.lock().unwrap().drag_paths = paths.clone();
             send_preview(app, paths.clone(), false);
-            json!({ "type": "enter", "paths": paths, "x": position.x / scale, "y": position.y / scale })
+            json!({ "type": "enter", "paths": paths, "x": x / scale, "y": y / scale })
         }
-        DragDropEvent::Over { position } => json!({ "type": "over", "x": position.x / scale, "y": position.y / scale }),
-        DragDropEvent::Drop { paths, position } => {
-            let paths: Vec<String> = paths.iter().map(|p| p.to_string_lossy().into_owned()).collect();
-            json!({ "type": "drop", "paths": paths, "x": position.x / scale, "y": position.y / scale })
-        }
-        DragDropEvent::Leave => json!({ "type": "leave", "x": -1, "y": -1 }),
-        _ => return,
+        DropEv::Over(x, y) => json!({ "type": "over", "x": x / scale, "y": y / scale }),
+        DropEv::Drop(paths, x, y) => json!({ "type": "drop", "paths": paths, "x": x / scale, "y": y / scale }),
+        DropEv::Leave => json!({ "type": "leave", "x": -1, "y": -1 }),
     };
     if payload["type"] != "over" {
         log::write(&format!("wheel drag {payload}"));
@@ -180,6 +196,9 @@ pub fn open(app: &AppHandle, kind: &str, mode: Mode, paths: Option<Vec<String>>)
     });
     bridge::emit(app, LABEL, "wheel:open", json!([payload]));
     if !was_open {
+        // Re-register Orange's drop target each time: WebView2 can replace it after creation.
+        let (app3, raw) = (app.clone(), hwnd.0 as isize);
+        let _ = app.run_on_main_thread(move || crate::droptarget::register(&app3, windows::Win32::Foundation::HWND(raw as *mut _)));
         crate::set_low_memory(&w, false);
         win::show_no_activate(hwnd, mode == Mode::Click);
     }

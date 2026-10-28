@@ -1,6 +1,6 @@
 [package]
 name = "orange"
-version = "2.0.0-beta.4"
+version = "2.0.0-beta.5"
 description = "Drag a file, tap a key, convert it. A radial file converter for Windows."
 authors = ["Shilpanshu"]
 license = "MIT"
@@ -41,6 +41,8 @@ notify = { version = "8", default-features = false }
 rfd = "0.16"
 # [phase2-actions] WinRT collections for the share sheet (same version the windows crate uses)
 windows-collections = "0.3"
+# #[implement] (Orange's own drop target for the wheel) expands to windows_core paths.
+windows-core = "0.62"
 
 [dependencies.windows]
 version = "0.62"
