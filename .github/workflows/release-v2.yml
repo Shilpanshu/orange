@@ -4,7 +4,7 @@
 #   Orange_<v>_x64-setup.exe.sig    its minisign signature (tauri-plugin-updater verifies it)
 #   latest.json                     the 2.x updater manifest (endpoint: releases/latest/download/latest.json)
 #   latest.yml                      the 1.x electron-updater manifest, so 1.x installs move to 2.x
-# Trigger: bump src-tauri/tauri.conf.json "version", then
+# Trigger: bump "version" in src-tauri/tauri.conf.json, src-tauri/Cargo.toml and package.json, then
 #   git tag v2.0.0 && git push origin v2.0.0
 # Secrets: TAURI_SIGNING_PRIVATE_KEY and TAURI_SIGNING_PRIVATE_KEY_PASSWORD (see docs/MIGRATION.md).
 name: Release v2
@@ -47,41 +47,39 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # npm's allow-scripts gate can leave Electron's binary undownloaded (the test harness uses it).
-      - name: Download the Electron binary
-        run: node node_modules/electron/install.js
-
-      - name: Cache bundled tools
-        uses: actions/cache@v4
-        with:
-          path: vendor/bin
-          key: vendor-${{ hashFiles('scripts/vendor/*.mjs') }}
-
-      - name: Download bundled tools
-        run: npm run vendor
+      - name: Build the web pages
+        run: npm run build:web
 
       - name: Install the Tauri CLI
         run: cargo install tauri-cli --version "^2" --locked
 
-      - name: Rust tests
-        working-directory: src-tauri
-        run: cargo test --locked
-
-      # Every conversion and tool against generated files; a failure stops the release.
-      - name: Regression tests
-        run: npm test
-        env:
-          ORANGE_TEST_REPORT_DIR: ${{ runner.temp }}/orange-test-results
-
-      - name: Keep the test report
-        if: always()
-        uses: actions/upload-artifact@v4
+      # The tests fetch FFmpeg, 7-Zip, Ghostscript, Pandoc and ImageMagick with the app's own
+      # downloader (~110 MB). Cached by the pinned URLs and hashes in engines.rs.
+      - name: Cache downloaded engines
+        uses: actions/cache@v4
         with:
-          name: orange-test-report
-          path: ${{ runner.temp }}/orange-test-results/
-          if-no-files-found: ignore
+          path: ${{ runner.temp }}/orange-engines
+          key: engines-${{ hashFiles('src-tauri/src/engines.rs') }}
+
+      # The feature cfgs un-ignore the converter, settings, updater and tool cases. The tool cases
+      # drive off-screen WebView2 windows, which the hosted runner's desktop session provides.
+      # The wheel self-test (--selftest) is left out of CI.
+      - name: Tests
+        working-directory: src-tauri
+        run: cargo test --tests --no-fail-fast
+        env:
+          RUSTFLAGS: --cfg orange_converters --cfg orange_settings --cfg orange_updater --cfg orange_tools
+          ORANGE_ENGINES_DIR: ${{ runner.temp }}/orange-engines
+
+      # Cases that could not get an engine (offline) skip with a reason instead of failing.
+      - name: Show skipped test cases
+        if: always()
+        run: |
+          $f = Join-Path $env:TEMP 'orange2-tests/skips.txt'
+          if (Test-Path $f) { Get-Content $f } else { 'No skipped cases.' }
 
       - name: Build the signed installer
+        working-directory: src-tauri
         run: cargo tauri build --bundles nsis
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
