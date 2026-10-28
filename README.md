@@ -47,6 +47,10 @@ To stay small, Orange does not ship the heavy engines. Each one downloads the fi
 
 Some things need nothing at all: reading PNG, JPEG, GIF, BMP, ICO and TIFF; writing JPG, PNG, BMP and PDF; subtitles; CSV, XLSX and ODS; and turning web pages into PDF (it uses the Edge that comes with Windows).
 
+## 2.0.0-beta.2
+
+No new features. This build exists to prove that Orange updates itself from one 2.0 release to the next.
+
 ## What's new in 2.0
 
 Orange is rebuilt on [Tauri](https://tauri.app) instead of Electron. The tools, the wheel and the settings are the same; what changed is how heavy it is.
