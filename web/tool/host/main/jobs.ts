@@ -134,6 +134,7 @@ export function holdOpen(): () => void {
 /** Jobs in flight, so the test runner can cancel them as the progress panel's Cancel does. */
 const active = new Set<AbortController>();
 (window as unknown as { __cancelJobs: () => void }).__cancelJobs = () => active.forEach((a) => a.abort());
+(window as unknown as { __activeJobs: () => number }).__activeJobs = () => active.size;
 
 /** What the test runner reads back: how each job in this window ended (see tools.rs, tool:job). */
 function record(rec: { tool: string; state: 'done' | 'failed' | 'cancelled'; outputs: string[]; message?: string }) {

@@ -56,6 +56,12 @@ pub const TOOL_IDS: &[&str] = &[
 
 static SEQ: AtomicU64 = AtomicU64::new(0);
 
+thread_local! {
+    /// The label of the last window `open()` made on this thread (the test server learns which window a
+    /// wheel choice opened from it; other requests open windows at the same time).
+    static OPENED: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+
 /// Tool windows run in their own WebView2 environment (own data folder), because they need what
 /// the lean shared one turns off: the GPU (Edit's WebGL renderer, WebGPU for the AI tools) and a
 /// renderer process per window (a long job in one window must not stall another). Every tool
@@ -138,6 +144,7 @@ pub fn open(app: &AppHandle, tool: &str, paths: Vec<String>, extra: Option<Value
         center_on_cursor_monitor(&win, w, h);
     }
     log::write(&format!("tool window {label}: {tool} ({} files)", paths_len(&args)));
+    OPENED.with(|o| *o.borrow_mut() = Some(label.clone()));
     Ok(label)
 }
 
@@ -233,6 +240,10 @@ pub fn send(app: &AppHandle, window: &WebviewWindow, channel: &str, args: &[Valu
         }
         "tool:test" => {
             test_report(window.label(), args.first().cloned().unwrap_or(Value::Null));
+            true
+        }
+        "tool:diag" => {
+            test_state().lock().unwrap().insert(format!("{}:diag", window.label()), args.first().cloned().unwrap_or(Value::Null));
             true
         }
         "tool:job" => {
@@ -1268,10 +1279,6 @@ pub fn start_test_server(app: &AppHandle) {
         .expect("test server thread");
 }
 
-fn tool_labels(app: &AppHandle) -> std::collections::HashSet<String> {
-    app.webview_windows().keys().filter(|k| k.starts_with("tool-")).cloned().collect()
-}
-
 fn run_request(app: &AppHandle, req: &Value) -> Value {
     use std::time::{Duration, Instant};
     let started = Instant::now();
@@ -1286,21 +1293,10 @@ fn run_request(app: &AppHandle, req: &Value) -> Value {
         "steps" => open(app, "_test", vec![], Some(json!({ "tools": req["tools"] }))),
         "page" => open(app, req["tool"].as_str().unwrap_or_default(), paths, None),
         "wheel" => {
-            // One at a time: the new window is found by diffing the window list.
-            static WHEEL: Mutex<()> = Mutex::new(());
-            let _g = WHEEL.lock().unwrap_or_else(|p| p.into_inner());
-            let before = tool_labels(app);
+            // The wheel choice opens its window on this thread, synchronously.
+            OPENED.with(|o| o.borrow_mut().take());
             crate::jobs::run_choice(app, req["item"].as_str().unwrap_or_default().to_string(), paths);
-            let t = Instant::now();
-            loop {
-                if let Some(l) = tool_labels(app).difference(&before).next() {
-                    break Ok(l.clone());
-                }
-                if t.elapsed() > Duration::from_secs(15) {
-                    break Err("the wheel choice opened no window".to_string());
-                }
-                std::thread::sleep(Duration::from_millis(25));
-            }
+            OPENED.with(|o| o.borrow_mut().take()).ok_or_else(|| "the wheel choice opened no window".to_string())
         }
         k => Err(format!("unknown request kind {k}")),
     };
@@ -1395,7 +1391,21 @@ return results;"#,
     }
     test_jobs().lock().unwrap().remove(&label);
     let error = if timed_out {
-        Value::String(format!("timed out after {} s (page: {}, jobs: {}/{want_jobs})", timeout.as_secs(), page, jobs.len()))
+        // Is the page alive, and what was it doing? (A blocked page cannot answer.)
+        let mut diag = Value::String("no answer: the page is blocked or gone".into());
+        if let Some(w) = app.get_webview_window(&label) {
+            let _ = w.eval("window.__TAURI__.core.invoke('bridge_send',{channel:'tool:diag',args:[{active:(window.__activeJobs||(()=>-1))(),jobs:window.__orangeJobs||[],errors:window.__testErrors||[]}]})");
+            let t = Instant::now();
+            while t.elapsed() < Duration::from_secs(5) {
+                if let Some(v) = test_state().lock().unwrap().remove(&format!("{label}:diag")) {
+                    diag = v;
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        }
+        let procs: Vec<u64> = procs().lock().unwrap().keys().cloned().collect();
+        Value::String(format!("timed out after {} s (page: {}, jobs: {}/{want_jobs}, diag: {diag}, registered processes: {procs:?})", timeout.as_secs(), page, jobs.len()))
     } else {
         page["error"].clone()
     };

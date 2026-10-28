@@ -96,6 +96,13 @@ impl ToolApp {
         let dir = std::env::temp_dir().join("orange2-tests").join(format!("toolapp-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("userdata")).map_err(|e| e.to_string())?;
+        // The scratch profile: defaults, but no graphics-card encoding. The cases check what the tools
+        // make, which must not depend on this PC's GPU; with it on, a window running a hardware
+        // encode next to other windows and encodes sometimes stopped answering (see the notes in
+        // tests/tools.rs). `ORANGE_TEST_GPU=1` leaves it on.
+        if std::env::var("ORANGE_TEST_GPU").as_deref() != Ok("1") {
+            std::fs::write(dir.join("userdata").join("settings.json"), r#"{"gpuEncode":"off"}"#).map_err(|e| e.to_string())?;
+        }
         let log = std::fs::File::create(dir.join("app.log")).map_err(|e| e.to_string())?;
         let mut cmd = Command::new(exe);
         cmd.env("ORANGE_TOOL_TEST_DIR", &dir)

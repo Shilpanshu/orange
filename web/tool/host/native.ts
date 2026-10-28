@@ -63,6 +63,9 @@ function fsError(code: string, message: string, path?: string): FsError {
 }
 
 /** One filesystem op, synchronously. Throws Node-style errors (err.code = 'ENOENT'...). */
+/** Test windows log the start of every synchronous call: a page blocked on one shows up as the last line. */
+const traceOn = () => !!(window as any).orange?.args?.test;
+
 /** Logs synchronous file calls that hold the page up (they block its thread). */
 function slow(what: string, t0: number) {
   const ms = performance.now() - t0;
@@ -71,7 +74,7 @@ function slow(what: string, t0: number) {
 
 export function fsSync<T = unknown>(op: string, p: string, extra: Record<string, unknown> = {}): T {
   const t0 = performance.now();
-  if ((window as any).__traceSync) (window as any).orange.send('log', `sync> ${op} ${p}`);
+  if (traceOn()) (window as any).orange.send('log', `sync> ${op} ${p}`);
   try {
     return fsSyncInner<T>(op, p, extra);
   } finally {
@@ -98,7 +101,7 @@ export async function fsAsync<T = unknown>(op: string, p: string, extra: Record<
 
 /** Whole file, synchronously. */
 export function readSync(p: string): Uint8Array {
-  if ((window as any).__traceSync) (window as any).orange.send('log', `sync> read ${p}`);
+  if (traceOn()) (window as any).orange.send('log', `sync> read ${p}`);
   const x = new XMLHttpRequest();
   x.open('GET', fileSrc(p), false);
   x.overrideMimeType('text/plain; charset=x-user-defined');
@@ -143,6 +146,7 @@ function writeResult(status: number, text: string, p: string) {
 }
 
 export function writeSync(p: string, data: Uint8Array | string, append = false) {
+  if (traceOn()) (window as any).orange.send('log', `sync> write ${p}`);
   const x = new XMLHttpRequest();
   x.open('POST', `${OFS}/write?p=${encodeURIComponent(p)}${append ? '&append=1' : ''}`, false);
   x.send((typeof data === "string" ? new TextEncoder().encode(data) : data) as unknown as XMLHttpRequestBodyInit);
