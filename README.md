@@ -196,23 +196,26 @@ You need Windows 10 or 11 (x64) and:
 ```powershell
 git clone https://github.com/Shilpanshu/orange.git
 cd orange
-npm install
+npm ci
+npm run build:web          # bundles the pages into web-dist/ (the app embeds them at build time)
 cargo install tauri-cli --version "^2" --locked
 cd src-tauri
 cargo tauri dev            # builds and runs Orange
 ```
 
-Nothing heavy is bundled, so there is nothing else to download: engines fetch themselves the first time you use a feature, into `%LOCALAPPDATA%\app.orange.converter\engines`.
+Nothing heavy is bundled, so there is nothing else to download: engines fetch themselves the first time you use a feature, into `%LOCALAPPDATA%\app.orange.converter\engines`. After changing anything under `web/`, `src/renderer/` or `src/shared/`, run `npm run build:web` again. `npm run typecheck` checks the TypeScript.
 
 > `cargo tauri dev` uses the same identifier as an installed Orange. Quit the installed copy first, or set `ORANGE_USER_DATA` to a scratch folder to keep your real settings out of it.
 
 ### Run the tests
 
 ```powershell
-cd src-tauri
-cargo test --tests                       # unit and integration tests
-node ../tests/run-v2.mjs --selftest      # also drives the wheel through its real drop target
+npm run build:web
+npm test                                 # cargo test in src-tauri, with the feature cfgs set for you
+node tests/run.mjs --selftest            # also drives the wheel through its real drop target
 ```
+
+The tests that need FFmpeg, 7-Zip, Ghostscript, Pandoc or ImageMagick download them with Orange's own downloader (about 110 MB) into `ORANGE_ENGINES_DIR` (default `%LOCALAPPDATA%\app.orange.converter.dev\engines`) and reuse them on later runs. The tool cases open off-screen tool windows and need WebView2. The AI tools download models, so they only run with `ORANGE_TEST_AI=1`.
 
 The self-test never moves your mouse or presses keys: it feeds events to the same state machine the global hooks use and calls the wheel's own OLE drop target in-process.
 
@@ -225,7 +228,7 @@ cargo tauri build --bundles nsis         # writes target/release/bundle/nsis/
 
 ### Publish a release
 
-Releases are built by GitHub, not on your PC. Bump `version` in `src-tauri/tauri.conf.json` and `src-tauri/Cargo.toml`, then push a tag:
+Releases are built by GitHub, not on your PC. Bump `version` in `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml` (and its `Cargo.lock` entry) and `package.json`, then push a tag:
 
 ```powershell
 git tag v2.0.1
@@ -248,10 +251,11 @@ src-tauri/src/        the app, in Rust
   settings.rs, presets.rs, watch.rs, context_menu.rs, shortcuts.rs   settings and automation
   updater.rs, diagnostics.rs   signed auto-update; logs and "Report a problem"
 src-tauri/tests/      integration tests
-web/                  tool windows, settings, shelf and clipboard pages (no framework)
-src/renderer/         the wheel and the corner panel
-src/shared/catalog.ts which formats, tools and actions apply to which files
-scripts/              web bundling and test scripts
+web/                  tool windows, shelf and clipboard pages, and the bridge to the Rust side (no framework)
+src/renderer/         the wheel, the corner panel and the settings page; shared styles and icons
+src/shared/           catalog.ts (which formats, tools and actions apply to which files) and shared types
+scripts/              build-web.mjs (bundles the pages), icons.mjs (renders the logo into icon files)
+tests/run.mjs         `npm test`
 ```
 
 ## Third-party software

@@ -14,18 +14,21 @@
 
 ### Signing key
 
-Generated with `cargo tauri signer generate` (password protected). It is stored **outside the repo**:
+Generated with `cargo tauri signer generate` (password protected). It was written **outside the
+repo**, to a temporary scratch folder:
 
-    C:\Users\<you>\AppData\Local\Temp\claude\d--git-orange\095b1c8e-...\scratchpad\tauri-keys\
+    C:\Users\<you>\AppData\Local\Temp\claude\d--git-orange\<session id>\scratchpad\tauri-keys\
       orange-updater.key            private key: secret
       orange-updater.password.txt   its password: secret
       orange-updater.key.pub        public key (already in tauri.conf.json)
 
-That folder is temporary. Move the two secret files to a password manager or other safe place.
-If the private key or password is lost, installed 2.x copies can never auto-update again (the
-public key is baked into them).
+Those are temporary paths and can be wiped at any time. **Copy the two secret files to a password
+manager or other safe place now.** If the private key or password is lost, installed 2.x copies can
+never auto-update again (the public key is baked into them); the only way out is a manual reinstall
+with a new key.
 
-Repository secrets to add (Settings > Secrets and variables > Actions):
+Two repository secrets are required (Settings > Secrets and variables > Actions); the release
+workflow fails at the signing step without them:
 
 | Secret | Value |
 |---|---|
@@ -34,19 +37,23 @@ Repository secrets to add (Settings > Secrets and variables > Actions):
 
 ## 2. Release pipeline (`.github/workflows/release-v2.yml`)
 
-On a `v2.*` tag (the tag must equal `src-tauri/tauri.conf.json` `version`): windows-latest,
-`npm ci`, `cargo test`, `npm test`, `cargo tauri build --bundles nsis` (signs the updater
-artifact), then a GitHub Release marked **latest** with:
+On a `v2.*` tag (the tag must equal the version in `src-tauri/tauri.conf.json`; keep
+`src-tauri/Cargo.toml` and `package.json` the same): windows-latest, `npm ci`, the web build, the
+Rust test suite (`cargo test` with the four `--cfg orange_*` flags; the tests download the engines
+they need), `cargo tauri build --bundles nsis` (signs the updater artifact), then a GitHub Release
+marked **latest** with:
 
 - `Orange_<v>_x64-setup.exe` and `.sig`
 - `latest.json` for 2.x
 - `latest.yml` for 1.x electron-updater (the bridge, below)
 
-`release.yml` (1.x) now ignores `v2.*` tags.
+The 1.x release workflow lives on the `1.x` branch only (tag `v1.2.2` is the last 1.x release).
 
 Both updaters follow GitHub's "latest release". After 2.0 ships, **never publish a 1.x release
 as latest** (a 1.x hotfix must be created with `--latest=false`), or 2.x clients will 404 on
 `latest.json` and 1.x clients would see a lower version.
+
+Version order for the updater: installed `2.0.0-alpha.1` < `2.0.0-beta.1` < `2.0.0`.
 
 ## 3. Identity and install location
 
@@ -92,28 +99,16 @@ How 1.x updates: electron-updater (GitHub provider) fetches `latest.yml` from th
 compares versions, downloads the `path` file, checks `sha512`, then on quit (or "Restart to
 update") runs it as `<installer> --updated /S [--force-run]`. 1.x is unsigned, so no publisher check.
 
-So the bridge is mostly data, and works even for users still on 1.2.x:
+There is no separate 1.3.0 release planned. The 2.0 release's own `latest.yml` moves 1.x installs
+straight to 2.0:
 
-- Every 2.x release also ships a `latest.yml` that points at the Tauri setup exe (the workflow
-  writes it with base64 SHA-512 and size, the format electron-builder uses). No `.blockmap`, so
+- Every 2.x release ships a `latest.yml` that points at the Tauri setup exe (the workflow writes it
+  with base64 SHA-512 and size, the format electron-builder uses). No `.blockmap`, so
   electron-updater does a full download.
-- The Tauri installer accepts `/S`, ignores `--updated`, runs the 1.x-removal hook, and
-  relaunches on `--force-run`.
+- The Tauri installer accepts `/S`, ignores `--updated`, runs the 1.x-removal hook (section 4,
+  which also removes the 1.x Explorer menu and login item), and relaunches on `--force-run`.
 
-A final 1.x release, **1.3.0**, ships before 2.0 to make the hop safe and visible:
-
-1. Release 1.3.0 normally (via `release.yml`, `v1.3.0` tag) and let it propagate for a week or two.
-2. 1.3.0 changes in `src/main/updater.ts`:
-   - On `update-available` with a major version >= 2, show a HUD notice ("Orange 2.0 is
-     downloading: faster, smaller. Your settings come with you.") even for automatic checks.
-   - Before `quitAndInstall` / install-on-quit to a 2.x version, flush settings to disk, unregister
-     its own Explorer menu (`context-menu.ts` with `launcher = null`) and login item
-     (`setLoginItemSettings({ openAtLogin: false })`). The installer hook does this too; doing it
-     from 1.3.0 covers non-default registry names.
-   - Set `autoUpdater.disableDifferentialDownload = true` (no 2.x blockmap).
-3. Then tag `v2.0.0` from `v2-tauri`. Its release becomes latest; 1.2.x and 1.3.0 both pick it up.
-
-Testing the bridge before shipping: install 1.3.0 in a VM, point it at a test repo/release
+Testing the bridge before shipping: install 1.2.2 in a VM, point it at a test repo/release
 containing 2.0's `latest.yml` and setup exe (electron-updater's `setFeedURL` or a
 `dev-app-update.yml` can point it there), confirm: download, silent install, 1.x folder gone, no 1.x menu/Run
 entries, 2.x started, settings imported.
