@@ -29,6 +29,9 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+pub mod pdfread;
+pub mod toolapp;
+
 /// Declares a test for an area that is still being ported. With `--cfg orange_<area>` the body
 /// runs; without it the test is an ignored stub that says what it waits for.
 #[macro_export]
@@ -42,14 +45,11 @@ macro_rules! pending {
         #[ignore = "pending converters"]
         fn $name() {}
     };
+    // The tools are real: they run in the app's tool windows through the test server
+    // (common/toolapp.rs). `--cfg orange_tools` is no longer needed.
     (tools, $name:ident, $body:block) => {
-        #[cfg(orange_tools)]
         #[test]
         fn $name() $body
-        #[cfg(not(orange_tools))]
-        #[test]
-        #[ignore = "pending tools"]
-        fn $name() {}
     };
     (settings, $name:ident, $body:block) => {
         #[cfg(orange_settings)]
@@ -131,17 +131,55 @@ pub fn files_under(dir: &Path) -> Vec<PathBuf> {
     out
 }
 
-/// The vendored engine binary, if present (`vendor/bin/<name>.exe` at the repo root).
+/// An engine binary (`ffmpeg`, `ffprobe`, `7z`, `gs/bin/gswin64c`, `imagemagick/magick`...): the
+/// vendored copy (`ORANGE_BIN_DIR`, or `vendor/bin` in this checkout or one above it), else the
+/// engine the app downloads on first use (into the engines folder; downloaded here too when
+/// missing). `None` when it cannot be had (offline): the case then skips with a reason.
 pub fn engine(name: &str) -> Option<PathBuf> {
-    let p = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("vendor").join("bin").join(format!("{name}.exe"));
-    if p.exists() {
+    static DOWNLOADING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let file = format!("{name}.exe");
+    let mut dirs: Vec<PathBuf> = std::env::var_os("ORANGE_BIN_DIR").map(PathBuf::from).into_iter().collect();
+    dirs.extend(Path::new(env!("CARGO_MANIFEST_DIR")).ancestors().map(|a| a.join("vendor").join("bin")));
+    if let Some(p) = dirs.iter().map(|d| d.join(&file)).find(|p| p.is_file()) {
         return Some(p);
     }
-    // Otherwise the engines the app downloaded (the converters use these): <engines>/<engine>/<name>.exe
-    let root = std::env::var_os("ORANGE_ENGINES_DIR")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("LOCALAPPDATA").map(|l| PathBuf::from(l).join("app.orange.converter.dev").join("engines")))?;
-    std::fs::read_dir(root).ok()?.flatten().map(|e| e.path().join(format!("{name}.exe"))).find(|c| c.is_file())
+    std::env::set_var("ORANGE_ENGINES_DIR", toolapp::engines_dir());
+    let _g = DOWNLOADING.lock().unwrap_or_else(|p| p.into_inner());
+    orange_lib::engines::ensure(name).ok().filter(|p| p.is_file())
+}
+
+/// Records why a case did nothing. libtest has no runtime skip, so the case returns (it shows as
+/// passed); the reason is printed (`-- --nocapture`) and appended to `<temp>/orange2-tests/skips.txt`.
+pub fn skip(reason: &str) {
+    let name = std::thread::current().name().unwrap_or("?").to_string();
+    eprintln!("SKIP {name}: {reason}");
+    let dir = std::env::temp_dir().join("orange2-tests");
+    let _ = std::fs::create_dir_all(&dir);
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(dir.join("skips.txt")) {
+        let _ = writeln!(f, "{name}: {reason}");
+    }
+}
+
+/// `need_engines!("ffmpeg", "7z")`: the case returns early (skipped, with the reason) when one is missing.
+#[macro_export]
+macro_rules! need_engines {
+    ($($e:expr),+) => {
+        $(if $crate::common::engine($e).is_none() {
+            $crate::common::skip(&format!("{} is not available (offline and not downloaded)", $e));
+            return;
+        })+
+    };
+}
+
+/// AI tools download models (hundreds of MB): only with `ORANGE_TEST_AI=1`.
+#[macro_export]
+macro_rules! need_ai {
+    () => {
+        if std::env::var("ORANGE_TEST_AI").as_deref() != Ok("1") {
+            $crate::common::skip("downloads models; set ORANGE_TEST_AI=1 to run");
+            return;
+        }
+    };
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -250,6 +288,9 @@ pub fn pdf(dir: &Path, name: &str, pages: usize) -> PathBuf {
         let s = format!("BT /F1 24 Tf 72 760 Td (Page {}) Tj 0 -40 Td ({TEXT_MARK}) Tj ET", i + 1);
         objs.push(format!("<< /Length {} >>\nstream\n{s}\nendstream", s.len()));
     }
+    // The document information is an indirect object, as the PDF spec (and every reader) wants.
+    objs.push("<< /Title (Orange fixture) /Author (Orange Test) /Subject (Regression fixture) >>".into());
+    let info = objs.len();
     let mut out = b"%PDF-1.4\n%\xE2\xE3\xCF\xD3\n".to_vec();
     let mut offsets = Vec::new();
     for (i, o) in objs.iter().enumerate() {
@@ -261,7 +302,7 @@ pub fn pdf(dir: &Path, name: &str, pages: usize) -> PathBuf {
     for off in offsets {
         write!(out, "{off:010} 00000 n \n").unwrap();
     }
-    write!(out, "trailer\n<< /Size {} /Root 1 0 R /Info << /Title (Orange fixture) /Author (Orange Test) >> >>\nstartxref\n{xref}\n%%EOF\n", objs.len() + 1).unwrap();
+    write!(out, "trailer\n<< /Size {} /Root 1 0 R /Info {info} 0 R >>\nstartxref\n{xref}\n%%EOF\n", objs.len() + 1).unwrap();
     let p = dir.join(name);
     std::fs::write(&p, out).unwrap();
     p
@@ -496,6 +537,11 @@ pub fn image_ok(p: &Path, fmt: &str, size: Option<(u32, u32)>) -> image::Dynamic
 pub fn pdf_pages(p: &Path) -> usize {
     let b = non_empty(p);
     assert_eq!(sniff(&b), "pdf", "{} is not a PDF", p.display());
+    // The page tree, also from compressed object streams (pdf-lib's default).
+    let tree = pdfread::PdfDoc::parse(&b).pages().len();
+    if tree > 0 {
+        return tree;
+    }
     let s = String::from_utf8_lossy(&b);
     let count = s
         .match_indices("/Count")
@@ -636,17 +682,12 @@ pub fn check_conversion(src_key: &str, target: &str) {
     verify_conversion(src_key, target, &outs);
 }
 
-#[cfg(orange_tools)]
-pub fn tool(id: &str, inputs: &[PathBuf], opts: serde_json::Value, out_dir: &Path) -> Result<Vec<PathBuf>, String> {
-    orange_lib::tools::run_tool(id, inputs, &opts, out_dir)
-}
-
 // ------------------------------------------------------------------------------------------------
 // Media (engine-backed: FFmpeg / ffprobe from vendor/bin)
 
 /// Runs vendored FFmpeg (`-y -loglevel error` prepended). Panics when it is missing.
 pub fn ffmpeg(args: &[&str]) {
-    let exe = engine("ffmpeg").expect("vendor/bin/ffmpeg.exe is missing");
+    let exe = engine("ffmpeg").expect("ffmpeg is missing");
     let st = std::process::Command::new(exe).args(["-hide_banner", "-loglevel", "error", "-y"]).args(args).status().unwrap();
     assert!(st.success(), "ffmpeg {args:?} failed");
 }
@@ -683,11 +724,14 @@ pub struct Probe {
     pub height: u64,
     pub channels: u64,
     pub sample_rate: u64,
+    /// The container's `title` tag.
+    pub title: Option<String>,
+    pub subtitle_tracks: usize,
 }
 
 /// ffprobe's view of a media file.
 pub fn probe(p: &Path) -> Probe {
-    let exe = engine("ffprobe").expect("vendor/bin/ffprobe.exe is missing");
+    let exe = engine("ffprobe").expect("ffprobe is missing");
     let out = std::process::Command::new(exe)
         .args(["-v", "error", "-print_format", "json", "-show_format", "-show_streams"])
         .arg(p)
@@ -695,7 +739,11 @@ pub fn probe(p: &Path) -> Probe {
         .unwrap();
     assert!(out.status.success(), "ffprobe failed on {}", p.display());
     let j: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    let mut r = Probe { duration: j["format"]["duration"].as_str().and_then(|s| s.parse().ok()).unwrap_or(0.0), ..Default::default() };
+    let mut r = Probe {
+        duration: j["format"]["duration"].as_str().and_then(|s| s.parse().ok()).unwrap_or(0.0),
+        title: j["format"]["tags"].as_object().and_then(|t| t.iter().find(|(k, _)| k.eq_ignore_ascii_case("title")).and_then(|(_, v)| v.as_str().map(String::from))),
+        ..Default::default()
+    };
     for s in j["streams"].as_array().into_iter().flatten() {
         let codec = s["codec_name"].as_str().map(String::from);
         match s["codec_type"].as_str() {
@@ -704,6 +752,7 @@ pub fn probe(p: &Path) -> Probe {
                 r.width = s["width"].as_u64().unwrap_or(0);
                 r.height = s["height"].as_u64().unwrap_or(0);
             }
+            Some("subtitle") => r.subtitle_tracks += 1,
             Some("audio") if r.acodec.is_none() => {
                 r.acodec = codec;
                 r.channels = s["channels"].as_u64().unwrap_or(0);
@@ -740,4 +789,141 @@ pub fn one(outs: Vec<PathBuf>) -> PathBuf {
 
 pub fn size_of(p: &Path) -> u64 {
     std::fs::metadata(p).map(|m| m.len()).unwrap_or(0)
+}
+
+
+// ------------------------------------------------------------------------------------------------
+// Tool-test fixtures and checks
+
+/// A JPEG at quality 95 with EXIF (Orientation 1, Artist), so Compress and Strip have something to drop.
+pub fn jpg_exif(dir: &Path, name: &str, w: u32, h: u32) -> PathBuf {
+    let rgb = image::DynamicImage::ImageRgba8(pattern(w, h)).to_rgb8();
+    let mut plain = Vec::new();
+    image::codecs::jpeg::JpegEncoder::new_with_quality(&mut plain, 95).encode(rgb.as_raw(), w, h, image::ExtendedColorType::Rgb8).unwrap();
+    // TIFF (little endian): IFD0 with Orientation (SHORT 1) and Artist (ASCII, at offset 38).
+    let mut tiff = vec![b'I', b'I', 42, 0, 8, 0, 0, 0, 2, 0];
+    tiff.extend_from_slice(&[0x12, 0x01, 3, 0, 1, 0, 0, 0, 1, 0, 0, 0]);
+    tiff.extend_from_slice(&[0x3B, 0x01, 2, 0, 12, 0, 0, 0, 38, 0, 0, 0]);
+    tiff.extend_from_slice(&[0, 0, 0, 0]);
+    tiff.extend_from_slice(b"Orange Test\0");
+    let mut app1 = b"Exif\0\0".to_vec();
+    app1.extend_from_slice(&tiff);
+    let mut out = plain[..2].to_vec();
+    out.extend_from_slice(&[0xFF, 0xE1]);
+    out.extend_from_slice(&((app1.len() + 2) as u16).to_be_bytes());
+    out.extend_from_slice(&app1);
+    out.extend_from_slice(&plain[2..]);
+    let p = dir.join(name);
+    std::fs::write(&p, out).unwrap();
+    p
+}
+
+/// A PNG with a little noise, so it does not compress to nothing (like a photo).
+pub fn photo_png(dir: &Path, name: &str, w: u32, h: u32) -> PathBuf {
+    let mut s = 0x1234_5678u32;
+    let base = pattern(w, h);
+    let img = image::RgbaImage::from_fn(w, h, |x, y| {
+        s = s.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        let n = ((s >> 24) % 25) as i32 - 12;
+        let p = base.get_pixel(x, y);
+        image::Rgba([(p[0] as i32 + n).clamp(0, 255) as u8, (p[1] as i32 + n).clamp(0, 255) as u8, (p[2] as i32 - n).clamp(0, 255) as u8, 255])
+    });
+    let p = dir.join(name);
+    img.save(&p).unwrap();
+    p
+}
+
+/// A one-page PDF around a large noisy JPEG on a small page: Compress (Ghostscript "ebook",
+/// 150 dpi) has something to shrink.
+pub fn pdf_photo(dir: &Path, name: &str) -> PathBuf {
+    let (w, h) = (1600u32, 1200u32);
+    let mut s = 0x9e37_79b9u32;
+    let base = pattern(w, h);
+    let rgb = image::RgbImage::from_fn(w, h, |x, y| {
+        s = s.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        let n = ((s >> 24) % 41) as i32 - 20;
+        let p = base.get_pixel(x, y);
+        image::Rgb([(p[0] as i32 + n).clamp(0, 255) as u8, (p[1] as i32 + n).clamp(0, 255) as u8, (p[2] as i32 - n).clamp(0, 255) as u8])
+    });
+    let mut jpeg = Vec::new();
+    image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, 92).encode(rgb.as_raw(), w, h, image::ExtendedColorType::Rgb8).unwrap();
+    let content = "q 400 0 0 300 72 400 cm /Im0 Do Q";
+    let mut out = b"%PDF-1.4\n".to_vec();
+    let mut offsets = vec![];
+    let mut obj = |out: &mut Vec<u8>, n: usize, body: &[u8]| {
+        offsets.push(out.len());
+        write!(out, "{n} 0 obj\n").unwrap();
+        out.extend_from_slice(body);
+        out.extend_from_slice(b"\nendobj\n");
+    };
+    obj(&mut out, 1, b"<< /Type /Catalog /Pages 2 0 R >>");
+    obj(&mut out, 2, b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>");
+    obj(&mut out, 3, b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /XObject << /Im0 5 0 R >> >> /Contents 4 0 R >>");
+    obj(&mut out, 4, format!("<< /Length {} >>\nstream\n{content}\nendstream", content.len()).as_bytes());
+    let mut img = format!("<< /Type /XObject /Subtype /Image /Width {w} /Height {h} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length {} >>\nstream\n", jpeg.len()).into_bytes();
+    img.extend_from_slice(&jpeg);
+    img.extend_from_slice(b"\nendstream");
+    obj(&mut out, 5, &img);
+    let xref = out.len();
+    write!(out, "xref\n0 6\n0000000000 65535 f \n").unwrap();
+    for off in offsets {
+        write!(out, "{off:010} 00000 n \n").unwrap();
+    }
+    write!(out, "trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n").unwrap();
+    let p = dir.join(name);
+    std::fs::write(&p, out).unwrap();
+    p
+}
+
+/// A scan-like image of text for OCR, drawn by ImageMagick; `None` when it can't be had.
+pub fn text_scan(dir: &Path, name: &str) -> Option<PathBuf> {
+    let magick = engine("imagemagick/magick")?;
+    let p = dir.join(name);
+    for font in [Some("Arial"), None] {
+        let mut c = std::process::Command::new(&magick);
+        c.env("MAGICK_HOME", magick.parent()?).args(["-size", "1400x360", "xc:white"]);
+        if let Some(f) = font {
+            c.args(["-font", f]);
+        }
+        c.args(["-pointsize", "96", "-fill", "black", "-annotate", "+60+150", "ORANGE TEST", "-annotate", "+60+290", "Hello World 2026"]).arg(&p);
+        if c.status().map(|s| s.success()).unwrap_or(false) && p.exists() {
+            return Some(p);
+        }
+    }
+    None
+}
+
+/// Speech from Windows' own synthesiser (a WAV), for the speech-to-text case; `None` when unavailable.
+pub fn speech_wav(dir: &Path, name: &str, text: &str) -> Option<PathBuf> {
+    let p = dir.join(name);
+    let script = format!(
+        "Add-Type -AssemblyName System.Speech; $s = New-Object System.Speech.Synthesis.SpeechSynthesizer; $s.SetOutputToWaveFile('{}'); $s.Speak('{}'); $s.Dispose()",
+        p.display(),
+        text.replace('\'', "''")
+    );
+    let ok = std::process::Command::new("powershell").args(["-NoProfile", "-NonInteractive", "-Command", &script]).stdin(std::process::Stdio::null()).status().map(|s| s.success()).unwrap_or(false);
+    (ok && p.exists()).then_some(p)
+}
+
+/// `7z t` on an archive, with a password or none (a prompt is refused, so an encrypted archive fails).
+pub fn seven_zip_test(p: &Path, password: Option<&str>) -> bool {
+    let Some(sz) = engine("7z") else { panic!("7z is missing") };
+    std::process::Command::new(sz)
+        .args(["t", "-bd"])
+        .arg(format!("-p{}", password.unwrap_or("")))
+        .arg(p)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+/// The archive passes `7z t` (with the password, if any).
+pub fn archive_ok(p: &Path, password: Option<&str>) {
+    assert!(seven_zip_test(p, password), "{} fails `7z t`", p.display());
+}
+
+/// `/Rotate` of each page, in order (0 when unset).
+pub fn pdf_rotations(p: &Path) -> Vec<i64> {
+    pdfread::PdfDoc::parse(&non_empty(p)).pages().into_iter().map(|(_, r)| r).collect()
 }

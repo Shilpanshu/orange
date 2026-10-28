@@ -3,10 +3,8 @@
 // 'error' when the exe can't start, kill(). Data written to stdin before the next tick is sent in
 // one piece (all the ported code writes stdin synchronously, right after spawning).
 import { Buffer } from 'buffer';
-import { Channel, b64ToBytes, bytesToB64, invoke } from '../native';
+import { Channel, b64ToBytes, bytesToB64, invoke, uniqueId } from '../native';
 import { EventEmitter } from './events';
-
-let seq = 1;
 
 class Pipe extends EventEmitter {
   setEncoding(e: BufferEncoding) {
@@ -47,7 +45,7 @@ export class ChildProcess extends EventEmitter {
   killed = false;
   constructor(exe: string, args: string[], opts: { cwd?: string; env?: Record<string, string | undefined> } = {}) {
     super();
-    this.pid = seq++;
+    this.pid = uniqueId();
     const id = this.pid;
     let result: { code: number; killed: boolean } | null = null;
     let ended = false;

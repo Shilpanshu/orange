@@ -131,30 +131,49 @@ export function holdOpen(): () => void {
   };
 }
 
+/** Jobs in flight, so the test runner can cancel them as the progress panel's Cancel does. */
+const active = new Set<AbortController>();
+(window as unknown as { __cancelJobs: () => void }).__cancelJobs = () => active.forEach((a) => a.abort());
+
+/** What the test runner reads back: how each job in this window ended (see tools.rs, tool:job). */
+function record(rec: { tool: string; state: 'done' | 'failed' | 'cancelled'; outputs: string[]; message?: string }) {
+  const w = window as unknown as { __orangeJobs?: unknown[]; orange: { args?: { test?: boolean }; send(ch: string, ...a: unknown[]): void } };
+  (w.__orangeJobs ??= []).push(rec);
+  if (w.orange.args?.test) w.orange.send('tool:job', rec);
+}
+
 /** Runs a tool on `paths` with HUD progress; resolves with the created files. Mirrors runTool. */
 export async function runTool(fn: ToolFn, id: string, paths: string[], options: any, title?: string): Promise<string[]> {
   const def = toolsFor(paths.map(extOf), paths.some(isDir)).find((t) => t.id === id);
   const ac = new AbortController();
+  active.add(ac);
   const job = hud.start(`${title ?? def?.label ?? id} · ${label(paths)}`, paths.length, () => ac.abort());
   running++;
   const { ctx, cleanup } = makeCtx(ac.signal, (f, note) => job.progress(f, note), options);
   const outputs: string[] = [];
   try {
     outputs.push(...(await fn(paths, ctx)));
-    if (ac.signal.aborted) await job.cancelled();
-    else {
+    if (ac.signal.aborted) {
+      record({ tool: id, state: 'cancelled', outputs });
+      await job.cancelled();
+    } else {
+      record({ tool: id, state: 'done', outputs });
       await job.done(outputs, []);
       if (outputs.length && settings.get().revealWhenDone) shell.showItemInFolder(outputs[0]);
     }
     return outputs;
   } catch (e: any) {
-    if (ac.signal.aborted) await job.cancelled();
-    else {
+    if (ac.signal.aborted) {
+      record({ tool: id, state: 'cancelled', outputs });
+      await job.cancelled();
+    } else {
       log('job failed', id, e);
+      record({ tool: id, state: 'failed', outputs, message: friendly(e) });
       await job.failed(friendly(e));
     }
     return outputs;
   } finally {
+    active.delete(ac);
     cleanup();
     running--;
     if (!running) idle.splice(0).forEach((f) => f());

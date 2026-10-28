@@ -150,6 +150,9 @@ pub fn run() {
         // A second launch opens Settings in the running instance instead of starting another.
         // [phase2-settings] ...unless it is an Explorer right-click launch: those gather into one wheel.
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            if tools::test_mode() {
+                return;
+            }
             if !context_menu::handle_argv(app, &args) {
                 open_settings(app);
             }
@@ -184,6 +187,12 @@ pub fn run() {
             diagnostics::init(handle.path().app_log_dir().unwrap_or_default(), handle.path().app_config_dir().unwrap_or_default());
             settings::init(handle.path().app_config_dir().unwrap_or_else(|_| std::env::temp_dir()));
             engines::set_app(&handle); // [phase2-convert]
+            // [phase2-tools] ORANGE_TOOL_TEST_DIR: a test app serves tool requests, nothing else.
+            if tools::test_mode() {
+                tools::start_test_server(&handle);
+                log::write("test server ready");
+                return Ok(());
+            }
             watch::set_runner(jobs::WatchRunner); // [phase2-convert]
             build_tray(&handle)?;
             let (tx, rx) = std::sync::mpsc::channel();
@@ -214,7 +223,11 @@ pub fn run() {
             selftest::maybe_start(&handle, started);
             Ok(())
         })
-        .build(tauri::generate_context!())
+        .build({
+            let mut context = tauri::generate_context!();
+            tools::test_identity(context.config_mut()); // [phase2-tools] test apps never use the installed identity
+            context
+        })
         .expect("error while building Orange");
     app.run(|_app, e| {
         // [phase2-updater] A downloaded update installs as Orange quits (1.x behaviour).

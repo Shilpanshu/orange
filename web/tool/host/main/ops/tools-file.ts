@@ -1037,6 +1037,72 @@ function pngJoin(chunks: PngChunk[]) {
 }
 const PNG_META = new Set(['eXIf', 'tEXt', 'iTXt', 'zTXt', 'tIME']);
 
+// ---- WebP (RIFF) containers: EXIF is a chunk, so it can be read and written without re-encoding.
+interface RiffChunk {
+  type: string;
+  data: Buffer;
+}
+function webpChunks(buf: Buffer): RiffChunk[] | null {
+  if (buf.length < 12 || buf.toString('latin1', 0, 4) !== 'RIFF' || buf.toString('latin1', 8, 12) !== 'WEBP') return null;
+  const out: RiffChunk[] = [];
+  let i = 12;
+  while (i + 8 <= buf.length) {
+    const len = buf.readUInt32LE(i + 4);
+    out.push({ type: buf.toString('latin1', i, i + 4), data: buf.subarray(i + 8, i + 8 + len) });
+    i += 8 + len + (len & 1);
+  }
+  return out;
+}
+function webpJoin(chunks: RiffChunk[]) {
+  const parts: Buffer[] = [];
+  for (const c of chunks) {
+    const h = Buffer.alloc(8);
+    h.write(c.type, 0, 'latin1');
+    h.writeUInt32LE(c.data.length, 4);
+    parts.push(h, c.data);
+    if (c.data.length & 1) parts.push(Buffer.alloc(1));
+  }
+  const body = Buffer.concat(parts);
+  const head = Buffer.alloc(12);
+  head.write('RIFF', 0, 'latin1');
+  head.writeUInt32LE(body.length + 4, 4);
+  head.write('WEBP', 8, 'latin1');
+  return Buffer.concat([head, body]);
+}
+/** Size and alpha of a simple (non-VP8X) WebP image chunk. */
+function webpImageInfo(c: RiffChunk): { w: number; h: number; alpha: boolean } | null {
+  const d = c.data;
+  if (c.type === 'VP8 ' && d.length >= 10) return { w: d.readUInt16LE(6) & 0x3fff, h: d.readUInt16LE(8) & 0x3fff, alpha: false };
+  if (c.type === 'VP8L' && d.length >= 5 && d[0] === 0x2f) {
+    const bits = d.readUInt32LE(1);
+    return { w: (bits & 0x3fff) + 1, h: ((bits >> 14) & 0x3fff) + 1, alpha: ((bits >> 28) & 1) === 1 };
+  }
+  return null;
+}
+/** The WebP with its EXIF chunk replaced by `tiff` (the file is not re-encoded). */
+function webpWithExif(buf: Buffer, tiff: Buffer): Buffer {
+  const chunks = webpChunks(buf);
+  if (!chunks) throw new UserError('This WebP file could not be read.');
+  let rest = chunks.filter((c) => c.type !== 'EXIF');
+  if (rest[0]?.type !== 'VP8X') {
+    // A simple file needs the extended header before it can carry metadata.
+    const img = rest.find((c) => c.type === 'VP8 ' || c.type === 'VP8L');
+    const info = img && webpImageInfo(img);
+    if (!info) throw new UserError('This WebP file could not be read.');
+    const x = Buffer.alloc(10);
+    x.writeUIntLE(info.w - 1, 4, 3);
+    x.writeUIntLE(info.h - 1, 7, 3);
+    x[0] = info.alpha ? 0x10 : 0;
+    rest = [{ type: 'VP8X', data: x }, ...rest];
+  }
+  rest[0] = { type: 'VP8X', data: Buffer.from(rest[0].data) };
+  rest[0].data[0] |= 0x08; // the EXIF flag
+  // Per the spec EXIF follows the image data and precedes XMP.
+  const at = rest.findIndex((c) => c.type === 'XMP ');
+  rest.splice(at < 0 ? rest.length : at, 0, { type: 'EXIF', data: tiff });
+  return webpJoin(rest);
+}
+
 /** The EXIF/TIFF block of a JPEG, PNG, WebP, TIFF… (via sharp for the formats we don't parse). */
 async function exifBlock(path: string, buf: Buffer): Promise<Buffer | undefined> {
   const j = jpegSegments(buf);
@@ -1049,6 +1115,13 @@ async function exifBlock(path: string, buf: Buffer): Promise<Buffer | undefined>
     const c = p.find((x) => x.type === 'eXIf');
     return c ? Buffer.from(c.data) : undefined;
   }
+  const w = webpChunks(buf);
+  if (w) {
+    const c = w.find((x) => x.type === 'EXIF');
+    if (!c) return undefined;
+    return Buffer.from(c.data.subarray(0, 6).toString('latin1') === 'Exif\0\0' ? c.data.subarray(6) : c.data);
+  }
+  if (['tif', 'tiff'].includes(extOf(path)) && (buf.toString('latin1', 0, 4) === 'II*\0' || buf.toString('latin1', 0, 4) === 'MM\0*')) return buf;
   try {
     const m = await sharpLib()(path, { failOn: 'none' }).metadata();
     if (!m.exif) return undefined;
@@ -1464,27 +1537,15 @@ async function editImage(input: string, out: string, fields: Record<string, stri
     }
     return;
   }
-  // WebP / AVIF: let libvips write the EXIF (string values). Its TIFF writer drops EXIF altogether,
-  // so a TIFF "edit" would silently change nothing.
+  // WebP: the EXIF chunk is rewritten in the container (no re-encoding). Other formats can only be
+  // shown or stripped: a TIFF/AVIF writer that keeps EXIF is not available, and an "edit" would
+  // silently change nothing.
   const fmt = extOf(input);
-  if (fmt !== 'webp' && fmt !== 'avif') throw new UserError(`Orange can't edit metadata in ${fmt.toUpperCase()} files, only show or remove it.`);
-  const exif: Record<string, Record<string, string>> = { IFD0: {}, IFD2: {} };
-  if (fields.make !== undefined) exif.IFD0.Make = fields.make;
-  if (fields.model !== undefined) exif.IFD0.Model = fields.model;
-  if (fields.author !== undefined) exif.IFD0.Artist = fields.author;
-  if (fields.copyright !== undefined) exif.IFD0.Copyright = fields.copyright;
-  if (fields.description !== undefined) exif.IFD0.ImageDescription = fields.description;
-  if (fields.dateTaken !== undefined) exif.IFD2.DateTimeOriginal = inputToExifDate(fields.dateTaken);
-  if (fields.gps !== undefined) {
-    // libvips takes GPS values as text ("48/1 51/1 301300/10000"); it can add tags but not remove them.
-    const pos = parseGps(fields.gps);
-    if (!pos) throw new UserError(`Orange can't remove just the location from ${extOf(input).toUpperCase()} files. Use Strip to remove all metadata.`);
-    const dms = (deg: number) => degToRational(deg).map(([a, b]) => `${a}/${b}`).join(' ');
-    exif.IFD3 = { GPSLatitudeRef: pos.lat < 0 ? 'S' : 'N', GPSLatitude: dms(pos.lat), GPSLongitudeRef: pos.lon < 0 ? 'W' : 'E', GPSLongitude: dms(pos.lon) };
-  }
-  let img = sharpLib()(buf, { failOn: 'none', animated: true }).keepMetadata().withExifMerge(exif);
-  img = fmt === 'webp' ? img.webp({ quality: 95, effort: 5 }) : img.avif({ quality: 80 });
-  await writeFile(out, await img.toBuffer());
+  const w = webpChunks(buf);
+  if (fmt !== 'webp' || !w) throw new UserError(`Orange can't edit metadata in ${fmt.toUpperCase()} files, only show or remove it.`);
+  const block = await exifBlock(input, buf);
+  const t = block ? parseTiff(block) : undefined;
+  await writeFile(out, webpWithExif(buf, rewriteTiff(t, imageChanges(fields, t))));
 }
 
 const AV_KEYS: Record<string, string> = { album_artist: 'album_artist', track: 'track', date: 'date' };

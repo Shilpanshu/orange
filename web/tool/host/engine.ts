@@ -2,13 +2,12 @@
 // binaries. They download once, on first use (src-tauri/src/engines.rs: SHA-256 checked, with a
 // progress row and Cancel in the HUD), into the engine store, and the page loads them from there
 // through the ofs:// protocol. After that they work offline.
-import { Channel, OFS, invoke } from './native';
+import { Channel, OFS, invoke, uniqueId } from './native';
 
 export type PageEngine = 'ai-runtime' | 'mediapipe' | 'tesseract-eng';
 
 const LABELS: Record<PageEngine, string> = { 'ai-runtime': 'the AI engine', mediapipe: 'face detection', 'tesseract-eng': 'English text recognition' };
 
-let seq = 1_000_000;
 const inflight = new Map<PageEngine, Promise<void>>();
 
 /** Folder URL of a downloaded page engine (a tesseract.js langPath). */
@@ -34,7 +33,7 @@ export function ensureEngine(name: PageEngine, progress?: (fraction: number, not
     const mb = Math.max(1, Math.round(info.bytes / 1048576));
     const label = LABELS[name];
     progress?.(0, `Downloading ${label} (${mb} MB), first use only…`);
-    const id = seq++;
+    const id = uniqueId();
     const ch = new Channel<[number, string]>((m) => progress?.(m[0], `Downloading ${label} (${mb} MB), first use only… ${Math.round(m[0] * 100)}%`));
     const stop = () => void invoke('tools_kill', { id });
     if (signal?.aborted) throw new Error('Cancelled');

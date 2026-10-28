@@ -9,10 +9,10 @@ import { PAGES } from './pages';
 const { tool } = args<{ tool: string }>();
 document.body.dataset.tool = tool;
 const { run } = args<{ run?: boolean }>();
-if (run || tool === 'extractArchive' || Object.hasOwn(PAGES, tool)) {
+if (tool === '_test' || run || tool === 'extractArchive' || Object.hasOwn(PAGES, tool)) {
   const script = document.createElement('script');
   script.type = 'module';
-  script.src = run || tool === 'extractArchive' ? 'pages/_run.js' : `pages/${tool}.js`;
+  script.src = tool === '_test' ? 'pages/_test.js' : run || tool === 'extractArchive' ? 'pages/_run.js' : `pages/${tool}.js`;
   script.onerror = () => showError('Something went wrong', `The "${tool}" tool couldn't be loaded.`);
   document.head.append(script);
 } else {

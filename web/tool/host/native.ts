@@ -157,16 +157,29 @@ export async function writeAsync(p: string, data: Uint8Array | string | Blob, ap
 
 // ------------------------------------------------------------------ progress panel
 
+/** Windows opened by the test runner (src-tauri/src/tools.rs, ORANGE_TOOL_TEST_DIR) show no progress panel. */
+const quiet = () => !!(window as unknown as { orange?: { args?: { test?: boolean } } }).orange?.args?.test;
+const none = <T>(v: T) => Promise.resolve(v);
+
 export const hudNative = {
-  start: (title: string) => invoke<number>('tools_hud', { op: { op: 'start', title } }),
+  start: (title: string) => (quiet() ? none(0) : invoke<number>('tools_hud', { op: { op: 'start', title } })),
   progress: (id: number, progress: number | undefined, note?: string) =>
-    invoke('tools_hud', { op: { op: 'progress', id, progress: progress ?? null, note: note ?? null } }),
-  poll: (id: number) => invoke<boolean>('tools_hud', { op: { op: 'poll', id } }),
-  done: (id: number, outputs: string[], errors: string[]) => invoke('tools_hud', { op: { op: 'done', id, outputs, errors } }),
-  failed: (id: number, note: string) => invoke('tools_hud', { op: { op: 'failed', id, note } }),
-  cancelled: (id: number) => invoke('tools_hud', { op: { op: 'cancelled', id } }),
-  notice: (title: string) => invoke('tools_hud', { op: { op: 'notice', title } }),
+    quiet() ? none(null) : invoke('tools_hud', { op: { op: 'progress', id, progress: progress ?? null, note: note ?? null } }),
+  poll: (id: number) => (quiet() ? none(false) : invoke<boolean>('tools_hud', { op: { op: 'poll', id } })),
+  done: (id: number, outputs: string[], errors: string[]) => (quiet() ? none(null) : invoke('tools_hud', { op: { op: 'done', id, outputs, errors } })),
+  failed: (id: number, note: string) => (quiet() ? none(null) : invoke('tools_hud', { op: { op: 'failed', id, note } })),
+  cancelled: (id: number) => (quiet() ? none(null) : invoke('tools_hud', { op: { op: 'cancelled', id } })),
+  notice: (title: string) => (quiet() ? none(null) : invoke('tools_hud', { op: { op: 'notice', title } })),
 };
+
+/**
+ * Ids for native processes and downloads. The native side keys them in one table shared by every
+ * tool window, so a per-window counter would make two windows kill each other's processes: each
+ * window gets a random 32-bit prefix, then counts.
+ */
+const idBase = crypto.getRandomValues(new Uint32Array(1))[0] * 1048576;
+let idCount = 0;
+export const uniqueId = () => idBase + (idCount++ % 1048576);
 
 export const windowOp = (op: string) => invoke('tools_window', { op: { op } });
 

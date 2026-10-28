@@ -343,39 +343,36 @@ class Sharp {
     }
     return this;
   }
-  // Metadata handling: magick keeps profiles and EXIF unless stripped; sharp drops them unless kept.
-  private keepMeta = false;
+  // Metadata handling: sharp drops all metadata unless asked to keep some of it; ImageMagick keeps
+  // everything unless told otherwise. Keep exactly the profiles asked for (ICC, EXIF, XMP), or all.
+  private keep = { all: false, icc: false, exif: false, xmp: false };
   keepIccProfile() {
-    this.keepMeta = true;
+    this.keep.icc = true;
     return this;
   }
   withIccProfile() {
-    this.keepMeta = true;
-    return this;
-  }
-  keepMetadata() {
-    this.keepMeta = true;
-    return this;
+    return this.keepIccProfile();
   }
   keepExif() {
-    this.keepMeta = true;
+    this.keep.exif = true;
     return this;
   }
   withExif() {
-    this.keepMeta = true;
-    return this;
+    return this.keepExif();
   }
   keepXmp() {
-    this.keepMeta = true;
+    this.keep.xmp = true;
     return this;
   }
   withXmp() {
-    this.keepMeta = true;
+    return this.keepXmp();
+  }
+  keepMetadata() {
+    this.keep.all = true;
     return this;
   }
   withMetadata() {
-    this.keepMeta = true;
-    return this;
+    return this.keepMetadata();
   }
   timeout() {
     return this;
@@ -464,7 +461,8 @@ class Sharp {
     const ops: string[] = [];
     for (const op of this.ops) ops.push(...(typeof op === 'function' ? await op() : op));
     const [outArgs] = await this.outArgs(file, fmt);
-    const strip = this.keepMeta ? [] : ['-strip'];
+    const kept = (['icc', 'exif', 'xmp'] as const).filter((k) => this.keep[k]);
+    const strip = this.keep.all ? [] : kept.length ? ['+profile', `${kept.map((k) => `!${k}`).join(',')},*`] : ['-strip'];
     const args = [...(await this.readArgs()), ...ops, ...strip, '-write', outArgs[outArgs.length - 1], ...[], '-format', '%w %h %[channels]\\n', 'info:'];
     // Output options go before -write.
     args.splice(args.indexOf('-write'), 0, ...outArgs.slice(0, -1));

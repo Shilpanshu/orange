@@ -101,6 +101,10 @@ pub fn open(app: &AppHandle, tool: &str, paths: Vec<String>, extra: Option<Value
         }
     }
     // The page reads its args from location.hash (web/bridge.ts); set it before any script runs.
+    if test_mode() {
+        args["test"] = json!(true);
+        args["offscreen"] = json!(true);
+    }
     let hash = urlencode(&args.to_string());
     let init = format!("history.replaceState(null,'',location.pathname+'#{hash}');");
     let off_screen = std::env::var("ORANGE_TOOL_OFFSCREEN").as_deref() == Ok("1")
@@ -229,6 +233,10 @@ pub fn send(app: &AppHandle, window: &WebviewWindow, channel: &str, args: &[Valu
         }
         "tool:test" => {
             test_report(window.label(), args.first().cloned().unwrap_or(Value::Null));
+            true
+        }
+        "tool:job" => {
+            test_jobs().lock().unwrap().entry(window.label().to_string()).or_default().push(args.first().cloned().unwrap_or(Value::Null));
             true
         }
         _ => false,
@@ -447,6 +455,14 @@ pub fn bin(name: &str) -> PathBuf {
     bin_dir().join(n)
 }
 
+/// Ids whose kill arrived before their process was registered (a Cancel pressed right after the
+/// start). Guarded by the same lock as the process table (`procs()`), so registering and killing
+/// cannot miss each other.
+fn pending_kills() -> &'static Mutex<std::collections::HashSet<u64>> {
+    static P: OnceLock<Mutex<std::collections::HashSet<u64>>> = OnceLock::new();
+    P.get_or_init(Default::default)
+}
+
 fn procs() -> &'static Mutex<HashMap<u64, Arc<Mutex<Child>>>> {
     static P: OnceLock<Mutex<HashMap<u64, Arc<Mutex<Child>>>>> = OnceLock::new();
     P.get_or_init(Default::default)
@@ -516,7 +532,15 @@ fn spawn_blocking(op: SpawnOp, on_data: Channel<Value>) -> Result<Value, String>
     let stdout = child.stdout.take().unwrap();
     let stderr = child.stderr.take().unwrap();
     let child = Arc::new(Mutex::new(child));
-    procs().lock().unwrap().insert(op.id, child.clone());
+    {
+        let mut table = procs().lock().unwrap();
+        table.insert(op.id, child.clone());
+        // Killed before it was registered: kill it now (its table entry stays, so the result says killed).
+        if pending_kills().lock().unwrap().remove(&op.id) {
+            table.remove(&op.id);
+            let _ = child.lock().unwrap().kill();
+        }
+    }
 
     let feeder = std::thread::spawn({
         let file = op.stdin_file.clone();
@@ -654,8 +678,15 @@ pub fn tools_kill(id: u64) {
     if let Some(c) = engine_cancels().lock().unwrap().remove(&id) {
         c.store(true, Ordering::SeqCst);
     }
-    if let Some(c) = procs().lock().unwrap().remove(&id) {
-        let _ = c.lock().unwrap().kill();
+    let mut table = procs().lock().unwrap();
+    match table.remove(&id) {
+        Some(c) => {
+            let _ = c.lock().unwrap().kill();
+        }
+        // Not registered (yet): the spawner kills it as soon as it is.
+        None => {
+            pending_kills().lock().unwrap().insert(id);
+        }
     }
 }
 
@@ -1145,4 +1176,237 @@ mod tests {
         assert_eq!(all.body().len(), 256);
         let _ = std::fs::remove_file(f);
     }
+}
+
+
+// ------------------------------------------------------------------ test server
+
+/// `ORANGE_TOOL_TEST_DIR=<dir>`: the app serves test requests instead of running as a tray app
+/// (src-tauri/tests/common/toolapp.rs is the client). No tray, hooks, wheel, shortcuts or updater;
+/// every window is off-screen and shows no progress panel; synthetic DOM events only.
+pub fn test_mode() -> bool {
+    std::env::var_os("ORANGE_TOOL_TEST_DIR").is_some()
+}
+
+/// A test app never uses the installed app's identity: its single-instance lock, profile and
+/// settings. The identifier is replaced before the app is built (`ORANGE_TEST_IDENTIFIER`, default
+/// the dev identifier), and the production one is refused.
+pub fn test_identity(cfg: &mut tauri::Config) {
+    if !test_mode() && std::env::var_os("ORANGE_TOOL_TEST").is_none() {
+        return;
+    }
+    let id = std::env::var("ORANGE_TEST_IDENTIFIER").unwrap_or_else(|_| "app.orange.converter.dev".into());
+    if id == "app.orange.converter" {
+        eprintln!("orange: refusing to run a test app with the installed app's identifier");
+        std::process::exit(3);
+    }
+    cfg.identifier = id;
+}
+
+fn pid_alive(pid: u32) -> bool {
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::System::Threading::{GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
+    unsafe {
+        let Ok(h) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) else { return false };
+        let mut code = 0u32;
+        let ok = GetExitCodeProcess(h, &mut code).is_ok();
+        let _ = CloseHandle(h);
+        ok && code == 259 // STILL_ACTIVE
+    }
+}
+
+fn test_jobs() -> &'static Mutex<HashMap<String, Vec<Value>>> {
+    static S: OnceLock<Mutex<HashMap<String, Vec<Value>>>> = OnceLock::new();
+    S.get_or_init(Default::default)
+}
+
+/// Serves `<dir>/<id>.req.json` -> `<dir>/<id>.res.json` until `<dir>/quit` appears or the parent
+/// process (`ORANGE_TOOL_TEST_PARENT`, a pid) is gone. Requests run concurrently, each in its own window:
+///
+/// - `{"kind":"steps","tools":[ids],"steps":[{"run":{"tool","paths","options"}} | {"invoke":[channel,...args]}]}`
+///   runs jobs through the page's own `tool:run` in a blank window (what every tool page calls);
+/// - `{"kind":"page","tool":id,"paths":[...],"script":js,"jobs":n}` opens the real tool page and runs
+///   `script` in it (clicks, typing) until `n` jobs have finished;
+/// - `{"kind":"wheel","item":"tool:compress","paths":[...],"script":js,"jobs":n}` does the same
+///   after choosing the item like the Tools wheel does (`jobs::run_choice`).
+///
+/// A response is `{ok, error, result, jobs:[{tool,state,outputs,message}], closed, ms, pageErrors}`.
+pub fn start_test_server(app: &AppHandle) {
+    let Some(dir) = std::env::var_os("ORANGE_TOOL_TEST_DIR").map(PathBuf::from) else { return };
+    let parent: Option<u32> = std::env::var("ORANGE_TOOL_TEST_PARENT").ok().and_then(|p| p.parse().ok());
+    let app = app.clone();
+    std::thread::Builder::new()
+        .name("orange-test-server".into())
+        .spawn(move || {
+            let _ = std::fs::create_dir_all(&dir);
+            let _ = std::fs::write(dir.join("ready"), std::process::id().to_string());
+            loop {
+                if dir.join("quit").exists() || parent.is_some_and(|p| !pid_alive(p)) {
+                    app.exit(0);
+                    return;
+                }
+                for e in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
+                    let name = e.file_name().to_string_lossy().into_owned();
+                    let Some(id) = name.strip_suffix(".req.json") else { continue };
+                    let claimed = dir.join(format!("{id}.run.json"));
+                    if std::fs::rename(e.path(), &claimed).is_err() {
+                        continue;
+                    }
+                    let req: Value = std::fs::read_to_string(&claimed).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or(Value::Null);
+                    let (app, dir, id) = (app.clone(), dir.clone(), id.to_string());
+                    std::thread::spawn(move || {
+                        let res = run_request(&app, &req);
+                        let tmp = dir.join(format!("{id}.res.tmp"));
+                        let _ = std::fs::write(&tmp, res.to_string());
+                        let _ = std::fs::rename(&tmp, dir.join(format!("{id}.res.json")));
+                        let _ = std::fs::remove_file(dir.join(format!("{id}.run.json")));
+                    });
+                }
+                std::thread::sleep(std::time::Duration::from_millis(30));
+            }
+        })
+        .expect("test server thread");
+}
+
+fn tool_labels(app: &AppHandle) -> std::collections::HashSet<String> {
+    app.webview_windows().keys().filter(|k| k.starts_with("tool-")).cloned().collect()
+}
+
+fn run_request(app: &AppHandle, req: &Value) -> Value {
+    use std::time::{Duration, Instant};
+    let started = Instant::now();
+    let timeout = Duration::from_secs(req["timeout"].as_u64().unwrap_or(120));
+    let fail = |msg: String| json!({ "ok": false, "error": msg, "ms": started.elapsed().as_millis() as u64 });
+    let kind = req["kind"].as_str().unwrap_or("steps");
+    let paths: Vec<String> = serde_json::from_value(req["paths"].clone()).unwrap_or_default();
+    let steps = req["steps"].as_array().cloned().unwrap_or_default();
+    let want_jobs = req["jobs"].as_u64().map(|n| n as usize).unwrap_or(if kind == "steps" { steps.iter().filter(|s| s.get("run").is_some()).count() } else { 1 });
+
+    let label = match kind {
+        "steps" => open(app, "_test", vec![], Some(json!({ "tools": req["tools"] }))),
+        "page" => open(app, req["tool"].as_str().unwrap_or_default(), paths, None),
+        "wheel" => {
+            // One at a time: the new window is found by diffing the window list.
+            static WHEEL: Mutex<()> = Mutex::new(());
+            let _g = WHEEL.lock().unwrap_or_else(|p| p.into_inner());
+            let before = tool_labels(app);
+            crate::jobs::run_choice(app, req["item"].as_str().unwrap_or_default().to_string(), paths);
+            let t = Instant::now();
+            loop {
+                if let Some(l) = tool_labels(app).difference(&before).next() {
+                    break Ok(l.clone());
+                }
+                if t.elapsed() > Duration::from_secs(15) {
+                    break Err("the wheel choice opened no window".to_string());
+                }
+                std::thread::sleep(Duration::from_millis(25));
+            }
+        }
+        k => Err(format!("unknown request kind {k}")),
+    };
+    let label = match label {
+        Ok(l) => l,
+        Err(e) => return fail(e),
+    };
+
+    // Wait for the page to build itself (it shows itself on tool:ready).
+    let mut shown = false;
+    while started.elapsed() < Duration::from_secs(60) {
+        match app.get_webview_window(&label) {
+            Some(w) if w.is_visible().unwrap_or(false) => {
+                shown = true;
+                break;
+            }
+            Some(_) => {}
+            None => break,
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    if !shown {
+        if let Some(w) = app.get_webview_window(&label) {
+            let _ = w.destroy();
+        }
+        return fail(format!("{label} never showed its page"));
+    }
+
+    let script = if kind == "steps" {
+        format!(
+            r#"const STEPS = {steps};
+const results = [];
+for (const s of STEPS) {{
+  if (s.run) {{
+    const running = window.orange.invoke('tool:run', s.run.tool, s.run.paths, s.run.options);
+    if (s.run.cancelAfterMs) {{ await wait(s.run.cancelAfterMs); window.__cancelJobs && window.__cancelJobs(); }}
+    results.push({{ outputs: await running }});
+  }} else {{
+    try {{ results.push({{ value: await window.orange.invoke(...s.invoke) }}); }} catch (e) {{ results.push({{ error: String(e && e.message || e) }}); }}
+  }}
+}}
+return results;"#,
+            steps = Value::Array(steps)
+        )
+    } else {
+        req["script"].as_str().unwrap_or("").to_string()
+    };
+    let wrapped = format!(
+        "(async () => {{ {TEST_PRELUDE}\n let result, error = null;\n try {{ result = await (async () => {{ {script}\n }})(); }} catch (e) {{ error = String(e && e.stack || e); }}\n window.__TAURI__.core.invoke('bridge_send', {{ channel: 'tool:test', args: [{{ result: result === undefined ? null : result, error, errors: window.__testErrors || [] }}] }});\n}})();"
+    );
+    test_state().lock().unwrap().remove(&label);
+    if let Some(w) = app.get_webview_window(&label) {
+        let _ = w.eval("window.__testErrors=window.__testErrors||[];addEventListener('error',e=>__testErrors.push(String((e.error&&e.error.stack)||e.message).slice(0,600)));addEventListener('unhandledrejection',e=>__testErrors.push(String(e.reason&&e.reason.stack||e.reason).slice(0,600)));");
+        let _ = w.eval(&wrapped);
+    }
+
+    // The script's report, then the jobs it started (a page job outlives the click that started it).
+    let mut page = Value::Null;
+    let mut jobs: Vec<Value> = vec![];
+    while started.elapsed() < timeout {
+        if page.is_null() {
+            if let Some(v) = test_state().lock().unwrap().remove(&label) {
+                page = v;
+            }
+        }
+        jobs = test_jobs().lock().unwrap().get(&label).cloned().unwrap_or_default();
+        let script_failed = !page.is_null() && !page["error"].is_null();
+        if script_failed || (!page.is_null() && jobs.len() >= want_jobs) {
+            break;
+        }
+        // A page that closed itself (after its job) may have lost the report.
+        if app.get_webview_window(&label).is_none() && jobs.len() >= want_jobs {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(30));
+    }
+    let timed_out = (page.is_null() && kind == "steps") || jobs.len() < want_jobs;
+    // A window that ran its job closes itself (page and wheel kinds); give it a moment.
+    let mut closed = app.get_webview_window(&label).is_none();
+    if kind != "steps" && !closed {
+        let t = Instant::now();
+        while t.elapsed() < Duration::from_secs(if timed_out { 0 } else { 10 }) {
+            if app.get_webview_window(&label).is_none() {
+                closed = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(40));
+        }
+    }
+    if let Some(w) = app.get_webview_window(&label) {
+        let _ = w.destroy();
+    }
+    test_jobs().lock().unwrap().remove(&label);
+    let error = if timed_out {
+        Value::String(format!("timed out after {} s (page: {}, jobs: {}/{want_jobs})", timeout.as_secs(), page, jobs.len()))
+    } else {
+        page["error"].clone()
+    };
+    json!({
+        "ok": error.is_null(),
+        "error": error,
+        "result": page["result"],
+        "pageErrors": page["errors"],
+        "jobs": jobs,
+        "closed": closed,
+        "label": label,
+        "ms": started.elapsed().as_millis() as u64,
+    })
 }

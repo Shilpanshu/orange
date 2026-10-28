@@ -149,6 +149,15 @@ orange.on = (ch: string, fn: (...a: any[]) => void) => {
   };
 };
 
+/** Loads the modules of several tools (the blank `_test` window the test runner drives). */
+export async function prepareTools(list: string[]) {
+  await initNative();
+  setBinDir(INFO.binDir);
+  await loadSettings();
+  const mods = new Set(list.flatMap((t) => TOOL_MODULE[t] ?? []));
+  for (const m of mods) Object.assign(tools, (await MODULES[m]()).tools);
+}
+
 /** Loads what `tool` needs before its page builds. */
 export async function prepare(tool: string) {
   const t0 = performance.now();

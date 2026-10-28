@@ -80,6 +80,7 @@ for (const f of ['icon.png', 'icon-32.png']) cpSync(join(root, 'assets', f), joi
   const entryPoints = { index: join(toolDir, 'index.ts') };
   for (const id of Object.keys(PAGES)) entryPoints[`pages/${id}`] = `tool-page:${id}`;
   entryPoints['pages/_run'] = 'tool-page:_run'; // hidden window: instant tools and presets
+  entryPoints['pages/_test'] = 'tool-page:_test'; // blank window the test runner drives (src-tauri/tests)
   const NL = String.fromCharCode(10);
   const toolPages = {
     name: 'tool-pages',
@@ -88,7 +89,9 @@ for (const f of ['icon.png', 'icon-32.png']) cpSync(join(root, 'assets', f), joi
       b.onLoad({ filter: /.*/, namespace: 'tool-page' }, (a) => {
         const id = a.path;
         const contents =
-          id === '_run'
+          id === '_test'
+            ? [`import { prepareTools } from './host/router';`, `import { ready } from './start';`, `import { args } from '../shared/ui';`, `await prepareTools(args().tools ?? []);`, `ready();`].join(NL)
+            : id === '_run'
             ? [`import { prepare } from './host/router';`, `import { runInstant } from './start';`, `import { args } from '../shared/ui';`, `await prepare(args().tool);`, `runInstant();`].join(NL)
             : [`import { prepare } from './host/router';`, `import { start, ready } from './start';`, `import { ${PAGES[id][1]} as page } from './${PAGES[id][0]}';`, `await prepare(${JSON.stringify(id)});`, `start(page);`, `ready();`].join(NL);
         return { resolveDir: toolDir, loader: 'ts', contents };
