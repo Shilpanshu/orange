@@ -195,6 +195,12 @@ pub fn open(app: &AppHandle, kind: &str, mode: Mode, paths: Option<Vec<String>>)
         std::thread::spawn(move || {
             std::thread::sleep(Duration::from_millis(700));
             let st = app2.state::<AppState>();
+            if st.wheel.is_open() && st.wheel.session.load(Ordering::SeqCst) == session && !hooks::primary_button_down() {
+                // No button held and nothing dropped: nobody can use this wheel, so don't leave it on screen.
+                log::write("wheel closed: no button held 700 ms after it opened");
+                close(&app2);
+                return;
+            }
             if st.wheel.is_open() && st.wheel.session.load(Ordering::SeqCst) == session && !drag_paths_known(&app2) {
                 log::write(&format!("no DragEnter 700 ms after the wheel opened; under the pointer: {}", win::describe_window_under_cursor(wheel_hwnd)));
             }

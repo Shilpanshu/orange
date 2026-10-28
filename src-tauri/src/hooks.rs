@@ -33,6 +33,17 @@ fn feed(input: Input) {
     });
 }
 
+/// True while the primary mouse button is physically down. The hooks' own bookkeeping can go stale if
+/// a button-up never reaches them, so anything that opens the wheel asks Windows too.
+pub fn primary_button_down() -> bool {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON, VK_RBUTTON};
+    unsafe {
+        // With the buttons swapped, the logical primary button is the physical right one.
+        let vk = if GetSystemMetrics(SM_SWAPBUTTON) != 0 { VK_RBUTTON } else { VK_LBUTTON };
+        GetAsyncKeyState(vk.0 as i32) < 0
+    }
+}
+
 unsafe extern "system" fn mouse_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     if code == HC_ACTION as i32 {
         let m = &*(lparam.0 as *const MSLLHOOKSTRUCT);
@@ -79,7 +90,15 @@ unsafe extern "system" fn keyboard_proc(code: i32, wparam: WPARAM, lparam: LPARA
         let key = key_of(k.vkCode);
         match wparam.0 as u32 {
             // Alt arrives as WM_SYSKEYDOWN, and so does any key while Alt is held.
-            WM_KEYDOWN | WM_SYSKEYDOWN => feed(Input::KeyDown(key)),
+            WM_KEYDOWN | WM_SYSKEYDOWN => {
+                // A lost button-up leaves the state machine "dragging" forever, and the next Alt or
+                // Shift tap, with nothing in hand, would open a wheel nobody can drop on. Believe
+                // Windows over our bookkeeping.
+                if matches!(key, Key::Mod(..)) && !primary_button_down() {
+                    feed(Input::Up(Button::Left));
+                }
+                feed(Input::KeyDown(key));
+            }
             WM_KEYUP | WM_SYSKEYUP => feed(Input::KeyUp(key)),
             _ => {}
         }

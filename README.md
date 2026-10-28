@@ -47,6 +47,10 @@ To stay small, Orange does not ship the heavy engines. Each one downloads the fi
 
 Some things need nothing at all: reading PNG, JPEG, GIF, BMP, ICO and TIFF; writing JPG, PNG, BMP and PDF; subtitles; CSV, XLSX and ODS; and turning web pages into PDF (it uses the Edge that comes with Windows).
 
+## 2.0.0-beta.3
+
+Fixes a wheel that could stay on screen with nothing to drop on it, so you could not click anything. It happened when Orange missed a mouse button going up, and the next Alt, Shift or Ctrl tap then opened the wheel. Orange now checks with Windows that the button is really held, and closes a wheel that has no button held after a moment.
+
 ## 2.0.0-beta.2
 
 No new features. This build exists to prove that Orange updates itself from one 2.0 release to the next.
