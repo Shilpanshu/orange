@@ -66,6 +66,7 @@ jobs:
       # The wheel self-test (--selftest) is left out of CI.
       # Everything that needs no desktop session: a failure here stops the release.
       - name: Tests (converters, settings, wheel logic)
+        id: tests_core
         timeout-minutes: 40
         working-directory: src-tauri
         run: cargo test --no-fail-fast --lib --test conversion_matrix --test convert_image --test drag_flows --test regressions --test settings_updater
@@ -77,6 +78,7 @@ jobs:
       # developer PC but have not been proven on a hosted runner yet, so for now they report without
       # blocking. Once they have run green here, delete `continue-on-error`.
       - name: Tests (tool windows and clipboard)
+        id: tests_windows
         continue-on-error: true
         timeout-minutes: 30
         working-directory: src-tauri
@@ -84,6 +86,14 @@ jobs:
         env:
           RUSTFLAGS: --cfg orange_converters --cfg orange_settings --cfg orange_updater --cfg orange_tools
           ORANGE_ENGINES_DIR: ${{ runner.temp }}/orange-engines
+
+      # GitHub shows a continue-on-error step as green even when it failed. This leaves the real outcome
+      # as a public annotation (readable without logging in) on the run page and through the API.
+      - name: Report test outcomes
+        if: always()
+        run: |
+          "::notice title=Tests core::outcome=${{ steps.tests_core.outcome }}"
+          "::notice title=Tests windows+clipboard::outcome=${{ steps.tests_windows.outcome }}"
 
       # Cases that could not get an engine (offline) skip with a reason instead of failing.
       - name: Show skipped test cases
