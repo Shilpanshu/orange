@@ -555,6 +555,8 @@ fn sc_ctrl_switches(ctx: &Ctx) -> Result<serde_json::Value, String> {
 fn sc_arrows_hub_drop(ctx: &Ctx) -> Result<serde_json::Value, String> {
     let dir = fresh_dir(ctx, "arrows");
     let file = png_fixture(&dir, "arrows.png", 2);
+    // The hub repeats the last slice chosen for this kind of file; a fresh profile has none.
+    crate::presets::remember_recent(crate::settings::store(), "png", "to:jpg");
     let geo = ctx.open_drag(&[LSHIFT])?;
     for k in ["right", "left", "up"] {
         wheel::nav(&ctx.app, k);

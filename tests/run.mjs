@@ -35,7 +35,7 @@ if (selftest && code === 0) {
     const dir = join(tmpdir(), 'orange2-selftest');
     mkdirSync(dir, { recursive: true });
     const out = join(dir, 'result.json');
-    const exe = join(crate, 'target', 'debug', 'orange.exe');
+    const exe = join(process.env.CARGO_TARGET_DIR ?? join(crate, 'target'), 'debug', 'orange.exe');
     code = run(exe, ['--selftest-scenarios', out, filter ?? ''], pending ? { ORANGE_SELFTEST_PENDING: '1' } : {});
     try {
       const r = JSON.parse(readFileSync(out, 'utf8'));
