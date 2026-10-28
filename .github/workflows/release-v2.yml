@@ -4,6 +4,9 @@
 #   Orange_<v>_x64-setup.exe.sig    its minisign signature (tauri-plugin-updater verifies it)
 #   latest.json                     the 2.x updater manifest (endpoint: releases/latest/download/latest.json)
 #   latest.yml                      the 1.x electron-updater manifest, so 1.x installs move to 2.x
+# It also copies the installer and a latest.json pointing at that copy to the gh-pages branch
+# (https://<owner>.github.io/orange/update/), the updater's first endpoint: some networks reset
+# connections to release-assets.githubusercontent.com, where GitHub serves release files.
 # Trigger: bump "version" in src-tauri/tauri.conf.json, src-tauri/Cargo.toml and package.json, then
 #   git tag v2.0.0 && git push origin v2.0.0
 # Secrets: TAURI_SIGNING_PRIVATE_KEY and TAURI_SIGNING_PRIVATE_KEY_PASSWORD (see docs/MIGRATION.md).
@@ -164,6 +167,35 @@ jobs:
             gh release upload $tag --clobber @files
           }
           if ($LASTEXITCODE -ne 0) { throw "gh release failed" }
+
+      # One orphan commit holding only the newest installer, so the branch never grows.
+      - name: Mirror the update to GitHub Pages
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $exe = Get-Item '${{ steps.manifests.outputs.exe }}'
+          $owner = '${{ github.repository_owner }}'.ToLower()
+          $base = "https://$owner.github.io/${{ github.event.repository.name }}/update"
+          $site = Join-Path $env:RUNNER_TEMP 'pages'
+          New-Item -ItemType Directory -Force "$site/update" | Out-Null
+          Copy-Item $exe.FullName "$site/update/"
+          $m = Get-Content '${{ steps.manifests.outputs.dir }}/latest.json' -Raw | ConvertFrom-Json
+          $m.platforms.'windows-x86_64'.url = "$base/$($exe.Name)"
+          $m | ConvertTo-Json -Depth 5 | Set-Content -Encoding utf8NoBOM "$site/update/latest.json"
+          New-Item "$site/.nojekyll" -ItemType File | Out-Null
+          Push-Location $site
+          git init -q -b gh-pages
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -q -m "Update mirror for ${{ github.ref_name }}"
+          git push -f "https://x-access-token:$env:GH_TOKEN@github.com/${{ github.repository }}.git" gh-pages
+          if ($LASTEXITCODE -ne 0) { throw "push to gh-pages failed" }
+          Pop-Location
+          # Make sure Pages serves the branch (fails harmlessly if it already does or the token may not).
+          gh api -X POST "repos/${{ github.repository }}/pages" -f 'source[branch]=gh-pages' -f 'source[path]=/' 2>$null
+          $global:LASTEXITCODE = 0
 
       - name: Keep the installer as a build artifact
         uses: actions/upload-artifact@v4

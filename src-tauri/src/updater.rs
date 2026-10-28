@@ -2,8 +2,11 @@
 //! check 30 s after launch and every 6 h, download in the background, install when Orange quits,
 //! and offer "Restart to update" in the tray once the download is ready.
 //!
-//! The release workflow publishes `latest.json` (and the minisign `.sig` it embeds); the public
-//! key and endpoint live in tauri.conf.json under `plugins.updater`.
+//! The release workflow publishes `latest.json` (and the minisign `.sig` it embeds) twice: on GitHub
+//! Pages (tried first) and on the GitHub release. Some networks reset connections to
+//! release-assets.githubusercontent.com, where release files are served from, so the Pages copy
+//! points at its own copy of the installer. The public key and endpoints live in tauri.conf.json
+//! under `plugins.updater`.
 
 use crate::{hud, log};
 use std::sync::Mutex;
@@ -14,6 +17,8 @@ use tauri_plugin_updater::{Update, UpdaterExt};
 
 const FIRST_CHECK: Duration = Duration::from_secs(30);
 const INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
+/// After a failed check (usually the network), try again this soon instead of waiting 6 h.
+const RETRY: Duration = Duration::from_secs(20 * 60);
 /// Tray menu id of the "Restart to update" item.
 pub const RESTART_ID: &str = "restart-update";
 
@@ -69,7 +74,7 @@ pub fn start(app: &AppHandle) {
         std::thread::sleep(FIRST_CHECK);
         loop {
             tauri::async_runtime::block_on(check(&app, false));
-            std::thread::sleep(INTERVAL);
+            std::thread::sleep(if status() == Status::Error { RETRY } else { INTERVAL });
         }
     });
 }

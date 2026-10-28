@@ -22,7 +22,7 @@ It's a Windows take on the drag-and-tap idea of the Mac app Tangerine, built fro
 
 > If Windows SmartScreen says "Windows protected your PC", choose **More info → Run anyway**. The installer is not Authenticode-signed yet, which is what triggers that warning. Updates are separately signed, so Orange only ever installs genuine ones.
 
-Orange updates itself from GitHub Releases. New versions download in the background and install the next time you quit.
+Orange updates itself from GitHub Releases (through a copy on GitHub Pages, shilpanshu.github.io, which it tries first). New versions download in the background and install the next time you quit.
 
 **Upgrading from Orange 1.x:** just install 2.0. It removes 1.x (including its right-click menu and start-with-Windows entry) and carries over your settings.
 
@@ -46,6 +46,10 @@ To stay small, Orange does not ship the heavy engines. Each one downloads the fi
 | English text data | 3 MB | OCR and Redact: Find text |
 
 Some things need nothing at all: reading PNG, JPEG, GIF, BMP, ICO and TIFF; writing JPG, PNG, BMP and PDF; subtitles; CSV, XLSX and ODS; and turning web pages into PDF (it uses the Edge that comes with Windows).
+
+## 2.0.0-beta.4
+
+Updates now arrive on networks that block GitHub's file server (release-assets.githubusercontent.com). Each release is also published on GitHub Pages, which Orange tries first, and a failed update check is retried after 20 minutes instead of 6 hours.
 
 ## 2.0.0-beta.3
 
@@ -183,7 +187,7 @@ Subtitles can be saved as SRT, VTT or plain text, burned into a copy of the vide
 
 Everything runs on your PC. Orange never uploads your files, collects no analytics and has no account. It only goes online to:
 
-- check GitHub for updates;
+- check GitHub (github.com and shilpanshu.github.io) for updates;
 - download an engine, an AI model or an OCR language the first time you use it (from gyan.dev, SourceForge, PyPI, conda-forge, jsDelivr or Hugging Face, depending on what it is);
 - download LibreOffice, if you ask for it in **Settings → Engines**.
 
