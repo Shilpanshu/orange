@@ -1,6 +1,6 @@
 import { icon } from '../shared/icons';
 
-declare const orange: import('../../preload/preload').OrangeApi;
+declare const orange: import('../../shared/orange-api').OrangeApi;
 
 // This window takes no drops: show the no-drop cursor and ignore a dropped file.
 window.addEventListener('dragover', (e) => {

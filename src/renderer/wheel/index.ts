@@ -1,7 +1,7 @@
 import { wheelItems, extFromMime, extOf, pinKey, type WheelItem, type WheelKind, type WheelPrefs } from '../../shared/catalog';
 import { icon } from '../shared/icons';
 
-declare const orange: import('../../preload/preload').OrangeApi;
+declare const orange: import('../../shared/orange-api').OrangeApi;
 
 const C = 220; // centre of the 440px stage
 const R_OUT = 200;

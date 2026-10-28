@@ -2,7 +2,7 @@
 // remove, clear, or collapse to a slim tab on the screen edge.
 import { icon } from '../../src/renderer/shared/icons';
 
-declare const orange: import('../../src/preload/preload').OrangeApi;
+declare const orange: import('../../src/shared/orange-api').OrangeApi;
 
 interface Item {
   path: string;

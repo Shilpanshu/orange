@@ -2,7 +2,7 @@
 // Keyboard: arrows move between choices, Enter picks, Esc closes.
 import { icon } from '../../src/renderer/shared/icons';
 
-declare const orange: import('../../src/preload/preload').OrangeApi;
+declare const orange: import('../../src/shared/orange-api').OrangeApi;
 
 // This window takes no drops: show the no-drop cursor and ignore a dropped file.
 window.addEventListener('dragover', (e) => {
