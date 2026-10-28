@@ -1,7 +1,7 @@
 import { wheelItems, extFromMime, extOf, pinKey, type WheelItem, type WheelKind, type WheelPrefs } from '../../shared/catalog';
 import { icon } from '../shared/icons';
 
-declare const orange: import('../../preload/preload').OrangeApi;
+declare const orange: import('../../shared/orange-api').OrangeApi;
 
 const C = 220; // centre of the 440px stage
 const R_OUT = 200;
@@ -220,6 +220,14 @@ orange.on(
     if (!wasOpen) {
       stage.classList.remove('landed');
       setPreview(null);
+      // A new drag starts from nothing: nothing carried over from the one before.
+      exactPaths = null;
+      selPaths = null;
+      dragCount = -1;
+      if (!o.paths) {
+        exts = [];
+        hasFolder = false;
+      }
     }
     if (o.paths) {
       knownPaths = o.paths;
@@ -233,6 +241,8 @@ orange.on(
     stage.style.transformOrigin = `${o.cursor.x}px ${o.cursor.y}px`;
     render(swap);
     show(true);
+    // Tells the host the wheel is painted (Orange 2 measures open latency from this).
+    requestAnimationFrame(() => orange.send('wheel:shown'));
   },
 );
 
@@ -240,6 +250,7 @@ orange.on('wheel:close', () => {
   show(false);
   hover = picked = -1;
   selPaths = null;
+  exactPaths = null;
   dragCount = -1;
 });
 
@@ -285,7 +296,17 @@ function applySelection() {
   return true;
 }
 
+// The exact dragged files, reported by the window's own drop target (Orange 2). They are the truth:
+// the Explorer selection below is only a quick guess made before the drag reaches the wheel, and
+// it can be slow or come from another Explorer tab, so it must never replace them.
+let exactPaths: string[] | null = null;
+
 orange.on('wheel:paths', (paths: string[]) => {
+  if (exactPaths) return;
+  // A guess that names a folder (a path with no extension) is the one most likely to be wrong: it can
+  // come from another Explorer tab. Showing the lone ZIP slice for what is really a photo is worse than
+  // a brief generic wheel, so such a guess waits for the exact files.
+  if (paths.some((p) => !extOf(p))) return;
   selPaths = paths;
   applySelection();
 });
@@ -324,14 +345,35 @@ window.addEventListener('dragleave', () => {
 window.addEventListener('drop', (e) => {
   e.preventDefault();
   const files = Array.from(e.dataTransfer?.files ?? []);
-  const paths = files.map((f) => orange.pathForFile(f)).filter(Boolean);
-  let i = segmentAt(e.clientX, e.clientY);
+  dropAt(e.clientX, e.clientY, files.map((f) => orange.pathForFile(f)).filter(Boolean));
+});
+
+function dropAt(x: number, y: number, paths: string[]) {
+  let i = segmentAt(x, y);
   // Dropped on the centre: arrow-key choice or last time's choice. A drop outside the ring (the
   // window's transparent corners) is a cancel, as in click mode.
-  if (i < 0 && Math.hypot(e.clientX - C, e.clientY - C) < R_IN) i = picked;
+  if (i < 0 && Math.hypot(x - C, y - C) < R_IN) i = picked;
   if (i < 0 || !paths.length) return orange.send('wheel:dismiss');
   // The real file names may disagree with the MIME guess; the main process re-validates.
   choose(i, paths);
+}
+
+// Orange 2 (Tauri): the window's own OLE drop target reports the exact dragged paths on enter,
+// so no MIME guessing is needed. Coordinates are CSS pixels in the window.
+orange.on('wheel:drag', (d: { type: 'enter' | 'over' | 'drop' | 'leave'; paths?: string[]; x: number; y: number }) => {
+  if (d.type === 'leave') {
+    if (hover !== -1) setActive(-1);
+    return;
+  }
+  if (d.type === 'drop') return dropAt(d.x, d.y, d.paths ?? []);
+  if (d.type === 'enter' && d.paths && !knownPaths) {
+    exactPaths = d.paths;
+    selPaths = d.paths;
+    dragCount = d.paths.length;
+    applySelection();
+  }
+  const i = segmentAt(d.x, d.y);
+  if (i !== hover) setActive(i);
 });
 
 // ------------------------------------------- click mode (Explorer selection hotkey)

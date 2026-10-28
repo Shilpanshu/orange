@@ -1,23 +1,17 @@
 {
   "name": "orange",
-  "version": "1.2.2",
+  "version": "2.0.0-beta.1",
+  "private": true,
   "description": "Drag a file, tap a key, convert it. A radial file converter for Windows.",
-  "main": "dist/main.js",
   "scripts": {
-    "build": "node scripts/build-helper.mjs && node scripts/build.mjs",
-    "start": "node scripts/build.mjs && electron .",
-    "dev": "electron .",
-    "dist": "node scripts/dist.mjs",
-    "typecheck": "tsc --noEmit",
-    "vendor": "node scripts/fetch-vendor.mjs",
-    "release": "node scripts/dist.mjs --publish",
-    "test": "node tests/run-tests.mjs"
+    "build:web": "node scripts/build-web.mjs",
+    "test": "node tests/run.mjs",
+    "typecheck": "tsc --noEmit -p ."
   },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Shilpanshu/orange.git"
   },
-  "keywords": [],
   "author": "Shilpanshu",
   "license": "MIT",
   "type": "commonjs",
@@ -25,150 +19,26 @@
     "url": "https://github.com/Shilpanshu/orange/issues"
   },
   "homepage": "https://github.com/Shilpanshu/orange#readme",
-  "devDependencies": {
-    "@mediapipe/tasks-vision": "^1.1.1",
-    "@types/node": "^26.6.5",
-    "electron": "^45.0.0",
-    "electron-builder": "^26.15.3",
-    "electron-updater": "^6.8.9",
-    "esbuild": "^0.28.2",
-    "jszip": "^3.10.2",
-    "pdf-lib": "^1.17.1",
-    "typescript": "^7.0.2"
-  },
   "dependencies": {
     "@huggingface/transformers": "^4.3.1",
-    "@tesseract.js-data/eng": "^1.0.0",
-    "exceljs": "^4.4.0",
-    "heic-convert": "^2.1.0",
-    "heic-decode": "^2.1.0",
+    "@mediapipe/tasks-vision": "^1.1.1",
+    "@noble/hashes": "^2.4.0",
+    "buffer": "^5.7.1",
+    "jszip": "^3.10.2",
+    "onnxruntime-web": "1.31.0-dev.20260914-8d85527a0",
+    "pako": "^1.0.11",
+    "pdf-lib": "^1.17.1",
     "pdfjs-dist": "^6.4.299",
+    "tesseract.js": "^7.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "esbuild": "^0.28.2",
     "sharp": "^0.35.5",
-    "tesseract.js": "^7.0.0",
-    "uiohook-napi": "^1.5.5"
+    "typescript": "^7.0.2"
   },
   "allowScripts": {
-    "electron@45.0.0": true,
-    "electron-winstaller@5.4.0": true,
     "esbuild@0.28.2": true,
-    "sharp@0.35.5": true,
-    "uiohook-napi@1.5.5": true,
-    "onnxruntime-node@1.30.0": true
-  },
-  "build": {
-    "appId": "app.orange.converter",
-    "productName": "Orange",
-    "copyright": "Orange",
-    "directories": {
-      "output": "release",
-      "buildResources": "assets"
-    },
-    "files": [
-      "dist/**/*",
-      "package.json",
-      "!**/*.map",
-      "!**/node_modules/**/*.{md,markdown,ts,mts,cts,d.ts,d.mts,flow,tsbuildinfo}",
-      "!**/node_modules/**/{test,tests,__tests__,example,examples,.github,.vscode}/**",
-      "!node_modules/@napi-rs/**",
-      "!node_modules/@types/**",
-      "!node_modules/undici-types/**",
-      "!node_modules/@tesseract.js-data/eng/4.0.0/**",
-      "!node_modules/{@huggingface,onnxruntime-node,onnxruntime-common,onnxruntime-web,protobufjs,@protobufjs,flatbuffers,guid-typescript,long,platform,adm-zip,escape-string-regexp}/**",
-      "!node_modules/tesseract.js-core/*.wasm.js",
-      "!node_modules/tesseract.js-core/tesseract-core{,-lstm,-simd-lstm,-relaxedsimd-lstm}.{js,wasm}",
-      "!node_modules/tesseract.js/{dist,docs}/**",
-      "!node_modules/pdfjs-dist/{build,web,types,image_decoders,wasm,standard_fonts}/**",
-      "!node_modules/pdfjs-dist/legacy/{web,image_decoders}/**",
-      "!node_modules/pdfjs-dist/legacy/build/{pdf.min.mjs,pdf.worker.min.mjs,pdf.sandbox.min.mjs,pdf.sandbox.mjs}",
-      "!node_modules/exceljs/dist/**",
-      "!node_modules/es-abstract/{2015,2016,2017,2018,2019,2020,2021,2022,operations}/**",
-      "!node_modules/zlibjs/bin/{*.min.js,*.dev.js,zlib.pretty.js}",
-      "!node_modules/{pako,jszip}/dist/**",
-      "!node_modules/bluebird/js/browser/**",
-      "!node_modules/async/dist/async.{mjs,min.js}",
-      "!node_modules/dayjs/{esm,locale}/**",
-      "!node_modules/pngjs/browser.js",
-      "!node_modules/libheif-js/libheif/**",
-      "!node_modules/libheif-js/libheif-wasm/{libheif-bundle.mjs,libheif.js,libheif.wasm}",
-      "!node_modules/uiohook-napi/{libuiohook,src}/**",
-      "!node_modules/uiohook-napi/prebuilds/{darwin,linux,win32-arm64}*/**",
-      "!node_modules/uiohook-napi/build/Release/{obj,.deps}/**",
-      "!node_modules/uiohook-napi/build/Release/*.{pdb,ipdb,iobj,lib,exp}",
-      "!node_modules/uiohook-napi/build/*.{vcxproj,vcxproj.filters,sln}"
-    ],
-    "asar": true,
-    "asarUnpack": [
-      "node_modules/sharp/**/*",
-      "node_modules/@img/**/*",
-      "node_modules/uiohook-napi/**/*",
-      "node_modules/@tesseract.js-data/**/*",
-      "node_modules/tesseract.js-core/**/*",
-      "node_modules/tesseract.js/**/*"
-    ],
-    "extraResources": [
-      {
-        "from": "vendor/bin",
-        "to": "bin",
-        "filter": [
-          "**/*",
-          "!pandoc.exe",
-          "!ffmpeg.exe",
-          "!ffprobe.exe",
-          "!*.part",
-          "!gs/bin/{gs,gswin64}.exe"
-        ]
-      }
-    ],
-    "win": {
-      "target": [
-        {
-          "target": "nsis",
-          "arch": [
-            "x64"
-          ]
-        }
-      ],
-      "icon": "assets/icon.ico",
-      "executableName": "Orange"
-    },
-    "nsis": {
-      "oneClick": false,
-      "perMachine": false,
-      "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": true,
-      "createStartMenuShortcut": true,
-      "shortcutName": "Orange",
-      "runAfterFinish": true,
-      "installerIcon": "assets/icon.ico",
-      "uninstallerIcon": "assets/icon.ico",
-      "artifactName": "Orange-Setup-${version}.exe",
-      "deleteAppDataOnUninstall": false
-    },
-    "publish": [
-      {
-        "provider": "github",
-        "owner": "Shilpanshu",
-        "repo": "orange",
-        "releaseType": "release"
-      }
-    ],
-    "electronLanguages": [
-      "en-US"
-    ],
-    "compression": "maximum",
-    "afterPack": "scripts/after-pack.cjs",
-    "extraFiles": [
-      {
-        "from": "vendor/bin/gs/bin",
-        "to": ".",
-        "filter": [
-          "vcruntime140.dll",
-          "vcruntime140_1.dll",
-          "msvcp140.dll",
-          "msvcp140_1.dll",
-          "msvcp140_atomic_wait.dll"
-        ]
-      }
-    ]
+    "sharp@0.35.5": true
   }
 }

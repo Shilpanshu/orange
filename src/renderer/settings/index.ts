@@ -2,7 +2,7 @@ import { h, segmented } from '../shared/ui';
 import { icon } from '../shared/icons';
 import { renderAutomation } from './automation';
 
-declare const orange: import('../../preload/preload').OrangeApi;
+declare const orange: import('../../shared/orange-api').OrangeApi;
 
 type ModKey = 'shift' | 'ctrl' | 'alt' | 'none';
 interface Settings {

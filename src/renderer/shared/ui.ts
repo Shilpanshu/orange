@@ -2,7 +2,7 @@
 import { icon } from './icons';
 import { TOOLS } from '../../shared/catalog';
 
-declare const orange: import('../../preload/preload').OrangeApi;
+declare const orange: import('../../shared/orange-api').OrangeApi;
 export const api = () => orange;
 
 export function h<K extends keyof HTMLElementTagNameMap>(

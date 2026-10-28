@@ -3,9 +3,9 @@
 import { h } from '../shared/ui';
 import { icon } from '../shared/icons';
 import { TOOLS, conversionTargets, kindOfExt, toolsFor, type Kind } from '../../shared/catalog';
-import type { Settings, WatchFolder, Preset } from '../../main/settings';
+import type { Settings, WatchFolder, Preset } from '../../shared/settings-types';
 
-type Api = import('../../preload/preload').OrangeApi;
+type Api = import('../../shared/orange-api').OrangeApi;
 
 // ------------------------------------------------------------ small helpers
 // Same markup as the helpers in settings/index.ts, so the page looks identical.

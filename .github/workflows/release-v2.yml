@@ -1,0 +1,166 @@
+# Orange 2.x (Tauri): builds the NSIS installer on GitHub's runner and publishes it to a GitHub
+# Release with everything both updaters read:
+#   Orange_<v>_x64-setup.exe        the installer
+#   Orange_<v>_x64-setup.exe.sig    its minisign signature (tauri-plugin-updater verifies it)
+#   latest.json                     the 2.x updater manifest (endpoint: releases/latest/download/latest.json)
+#   latest.yml                      the 1.x electron-updater manifest, so 1.x installs move to 2.x
+# Trigger: bump "version" in src-tauri/tauri.conf.json, src-tauri/Cargo.toml and package.json, then
+#   git tag v2.0.0 && git push origin v2.0.0
+# Secrets: TAURI_SIGNING_PRIVATE_KEY and TAURI_SIGNING_PRIVATE_KEY_PASSWORD (see docs/MIGRATION.md).
+name: Release v2
+
+on:
+  push:
+    tags: ['v2.*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Check the tag matches tauri.conf.json
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          $v = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          if ("v$v" -ne "${{ github.ref_name }}") { throw "Tag ${{ github.ref_name }} does not match tauri.conf.json version $v" }
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build the web pages
+        run: npm run build:web
+
+      - name: Install the Tauri CLI
+        run: cargo install tauri-cli --version "^2" --locked
+
+      # The tests fetch FFmpeg, 7-Zip, Ghostscript, Pandoc and ImageMagick with the app's own
+      # downloader (~110 MB). Cached by the pinned URLs and hashes in engines.rs.
+      - name: Cache downloaded engines
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/orange-engines
+          key: engines-${{ hashFiles('src-tauri/src/engines.rs') }}
+
+      # The feature cfgs un-ignore the converter, settings, updater and tool cases. The tool cases
+      # drive off-screen WebView2 windows, which the hosted runner's desktop session provides.
+      # The wheel self-test (--selftest) is left out of CI.
+      # Everything that needs no desktop session: a failure here stops the release.
+      - name: Tests (converters, settings, wheel logic)
+        timeout-minutes: 40
+        working-directory: src-tauri
+        run: cargo test --no-fail-fast --lib --test conversion_matrix --test convert_image --test drag_flows --test regressions --test settings_updater
+        env:
+          RUSTFLAGS: --cfg orange_converters --cfg orange_settings --cfg orange_updater --cfg orange_tools
+          ORANGE_ENGINES_DIR: ${{ runner.temp }}/orange-engines
+
+      # These open hidden WebView2 tool windows and use the real clipboard. They are known to pass on a
+      # developer PC but have not been proven on a hosted runner yet, so for now they report without
+      # blocking. Once they have run green here, delete `continue-on-error`.
+      - name: Tests (tool windows and clipboard)
+        continue-on-error: true
+        timeout-minutes: 30
+        working-directory: src-tauri
+        run: cargo test --no-fail-fast --test tools --test clipboard
+        env:
+          RUSTFLAGS: --cfg orange_converters --cfg orange_settings --cfg orange_updater --cfg orange_tools
+          ORANGE_ENGINES_DIR: ${{ runner.temp }}/orange-engines
+
+      # Cases that could not get an engine (offline) skip with a reason instead of failing.
+      - name: Show skipped test cases
+        if: always()
+        run: |
+          $f = Join-Path $env:TEMP 'orange2-tests/skips.txt'
+          if (Test-Path $f) { Get-Content $f } else { 'No skipped cases.' }
+
+      - name: Build the signed installer
+        working-directory: src-tauri
+        run: cargo tauri build --bundles nsis
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+      - name: Write latest.json and latest.yml
+        id: manifests
+        run: |
+          $v = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          $dir = 'src-tauri/target/release/bundle/nsis'
+          $exe = Get-Item "$dir/*_${v}_x64-setup.exe"
+          $sig = Get-Item "$($exe.FullName).sig"
+          $tag = "v$v"
+          # GitHub turns spaces into dots in asset names; Tauri's names have none.
+          $url = "https://github.com/${{ github.repository }}/releases/download/$tag/$($exe.Name)"
+          $now = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffZ')
+
+          # tauri-plugin-updater manifest.
+          $notes = "Orange $v. See https://github.com/${{ github.repository }}/releases/tag/$tag"
+          @{
+            version  = $v
+            notes    = $notes
+            pub_date = $now
+            platforms = @{ 'windows-x86_64' = @{ signature = (Get-Content $sig -Raw).Trim(); url = $url } }
+          } | ConvertTo-Json -Depth 5 | Set-Content -Encoding utf8NoBOM "$dir/latest.json"
+
+          # electron-updater manifest for Orange 1.x (sha512 is base64, as electron-builder writes it).
+          $sha = [Convert]::ToBase64String([Security.Cryptography.SHA512]::Create().ComputeHash([IO.File]::ReadAllBytes($exe.FullName)))
+          @"
+          version: $v
+          files:
+            - url: $($exe.Name)
+              sha512: $sha
+              size: $($exe.Length)
+          path: $($exe.Name)
+          sha512: $sha
+          releaseDate: '$now'
+          "@ | Set-Content -Encoding utf8NoBOM "$dir/latest.yml"
+
+          "exe=$($exe.FullName)" >> $env:GITHUB_OUTPUT
+          "sig=$($sig.FullName)" >> $env:GITHUB_OUTPUT
+          "dir=$dir" >> $env:GITHUB_OUTPUT
+          Get-Content "$dir/latest.json", "$dir/latest.yml"
+
+      - name: Publish the GitHub release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $tag = '${{ github.ref_name }}'
+          $dir = '${{ steps.manifests.outputs.dir }}'
+          $files = @('${{ steps.manifests.outputs.exe }}', '${{ steps.manifests.outputs.sig }}', "$dir/latest.json", "$dir/latest.yml")
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -ne 0) {
+            # --latest: both updaters read the "latest" release, so 2.x must hold that badge.
+            gh release create $tag --title $tag.TrimStart('v') --generate-notes --latest @files
+          } else {
+            gh release upload $tag --clobber @files
+          }
+          if ($LASTEXITCODE -ne 0) { throw "gh release failed" }
+
+      - name: Keep the installer as a build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Orange-Setup-v2
+          path: |
+            ${{ steps.manifests.outputs.dir }}/*.exe
+            ${{ steps.manifests.outputs.dir }}/*.sig
+            ${{ steps.manifests.outputs.dir }}/latest.*
+          if-no-files-found: error
