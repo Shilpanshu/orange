@@ -1,5 +1,7 @@
-// Orange 2.0 test entry point: `node tests/run-v2.mjs [--selftest] [--pending] [filter]`.
-// 1. `cargo test` in src-tauri (unit + integration tests; pending areas show as ignored).
+// Orange test entry point (`npm test`): `node tests/run.mjs [--selftest] [--pending] [filter]`.
+// 1. `cargo test` in src-tauri with the feature cfgs below. The tests fetch the engines they need
+//    (FFmpeg, 7-Zip, Ghostscript, Pandoc, ImageMagick) with the app's own downloader into
+//    ORANGE_ENGINES_DIR (default: the dev profile's engines folder), once, then reuse them.
 // 2. With --selftest: builds with `--features selftest` and runs `orange.exe --selftest-scenarios`,
 //    which drives the wheel through its own IDropTarget in-process (never real mouse/keyboard input).
 // --pending also runs the ignored cases (cargo -- --include-ignored, ORANGE_SELFTEST_PENDING=1).
@@ -16,9 +18,12 @@ const selftest = args.includes('--selftest');
 const pending = args.includes('--pending');
 const filter = args.find((a) => !a.startsWith('--'));
 
-const run = (cmd, a, env = {}) => spawnSync(cmd, a, { cwd: crate, stdio: 'inherit', env: { ...process.env, ...env } }).status ?? 1;
+const cfgs = ['orange_converters', 'orange_settings', 'orange_updater', 'orange_tools'].map((c) => `--cfg ${c}`).join(' ');
+const base = { ...process.env, RUSTFLAGS: [process.env.RUSTFLAGS, cfgs].filter(Boolean).join(' ') };
+if (!base.ORANGE_ENGINES_DIR) base.ORANGE_ENGINES_DIR = join(process.env.LOCALAPPDATA ?? tmpdir(), 'app.orange.converter.dev', 'engines');
+const run = (cmd, a, env = {}) => spawnSync(cmd, a, { cwd: crate, stdio: 'inherit', env: { ...base, ...env } }).status ?? 1;
 
-const testArgs = ['test', '--tests'];
+const testArgs = ['test', '--tests', '--no-fail-fast'];
 const after = [];
 if (filter) after.push(filter);
 if (pending) after.push('--include-ignored');

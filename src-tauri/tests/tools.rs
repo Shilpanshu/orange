@@ -3,8 +3,8 @@
 //! (see `common/toolapp.rs`), with the option shapes the tool pages send. The checks are the
 //! `verify_*` helpers of `common` (ffprobe, image decode, PDF page count, ZIP listing, `7z t`).
 //!
-//! Cases that need FFmpeg / 7-Zip / Ghostscript / ImageMagick use the vendored engines or the ones
-//! the app downloads on first use; when one can't be had (offline) the case skips with a reason
+//! Cases that need FFmpeg / 7-Zip / Ghostscript / ImageMagick use the engines the app downloads
+//! on first use (`common::engine`, into `ORANGE_ENGINES_DIR`); when one can't be had (offline) the case skips with a reason
 //! (`SKIP` lines with `-- --nocapture`, and `<temp>/orange2-tests/skips.txt`). The AI tools
 //! (remove background, upscale, speech) download models and only run with `ORANGE_TEST_AI=1`.
 //!

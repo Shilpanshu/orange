@@ -434,9 +434,8 @@ pub fn tools_info(app: AppHandle) -> Value {
 
 // ------------------------------------------------------------------ bundled tools
 
-/// Folder holding the bundled command-line tools (ffmpeg, ffprobe, 7z, gs, magick, pandoc).
-/// Installed: <resources>/bin. From source: the nearest vendor/bin above the executable or the
-/// working directory (a git worktree finds the main checkout's). `ORANGE_BIN_DIR` overrides.
+/// Folder holding command-line tools shipped next to the exe (<exe>/bin or <exe>/resources/bin), or
+/// the one `ORANGE_BIN_DIR` names. Orange 2 ships none: tools missing here come from `engines::ensure`.
 pub fn bin_dir() -> PathBuf {
     static D: OnceLock<PathBuf> = OnceLock::new();
     D.get_or_init(|| {
@@ -448,18 +447,14 @@ pub fn bin_dir() -> PathBuf {
             if let Some(d) = e.parent() {
                 starts.push(d.join("bin"));
                 starts.push(d.join("resources").join("bin"));
-                starts.extend(d.ancestors().map(|a| a.join("vendor").join("bin")));
             }
-        }
-        if let Ok(c) = std::env::current_dir() {
-            starts.extend(c.ancestors().map(|a| a.join("vendor").join("bin")));
         }
         starts.into_iter().find(|d| d.join("7z.exe").exists() || d.join("ffmpeg.exe").exists() || d.join("ffmpeg.exe.zst").exists()).unwrap_or_else(|| PathBuf::from("bin"))
     })
     .clone()
 }
 
-/// Path of a tool in the local vendor folder ("ffmpeg", "gs/bin/gswin64c"). Tools not found there
+/// Path of a tool in `bin_dir()` ("ffmpeg", "gs/bin/gswin64c"). Tools not found there
 /// come from engines::ensure (see tools_spawn).
 pub fn bin(name: &str) -> PathBuf {
     let n = if name.ends_with(".exe") { name.to_string() } else { format!("{name}.exe") };
@@ -514,7 +509,7 @@ fn spawn_blocking(op: SpawnOp, on_data: Channel<Value>) -> Result<Value, String>
     } else if bin(&op.exe).is_file() {
         bin(&op.exe)
     } else {
-        // Not in a source checkout's vendor/bin: the converters' engine store (downloads on first use).
+        // Not in bin_dir(): the engine store (downloads on first use).
         crate::engines::ensure(&op.exe).map_err(|e| format!("spawn {} ENOENT ({e})", op.exe))?
     };
     let mut cmd = Command::new(&exe);

@@ -2,8 +2,8 @@
 //! `tests/fixtures.ts` and `tests/verify.ts`.
 //!
 //! Fixtures are generated with the standard library and the `image` crate only, so the suite runs
-//! on a clean checkout without FFmpeg, 7-Zip or Office. Cases that need an engine look for it in
-//! `vendor/bin` (see [`engine`]) and are `#[ignore]`d until their area is ported.
+//! on a clean checkout without FFmpeg, 7-Zip or Office. Cases that need an engine download it with
+//! the product's own `engines::ensure` (see [`engine`]).
 //!
 //! ## Pending areas
 //!
@@ -131,18 +131,12 @@ pub fn files_under(dir: &Path) -> Vec<PathBuf> {
     out
 }
 
-/// An engine binary (`ffmpeg`, `ffprobe`, `7z`, `gs/bin/gswin64c`, `imagemagick/magick`...): the
-/// vendored copy (`ORANGE_BIN_DIR`, or `vendor/bin` in this checkout or one above it), else the
-/// engine the app downloads on first use (into the engines folder; downloaded here too when
-/// missing). `None` when it cannot be had (offline): the case then skips with a reason.
+/// An engine binary (`ffmpeg`, `ffprobe`, `7z`, `gs/bin/gswin64c`, `imagemagick/magick`...), fetched
+/// by the product's own downloader (`engines::ensure`) into `ORANGE_ENGINES_DIR` on first need and
+/// reused for the rest of the run (and later runs). `None` when it cannot be had (offline): the case
+/// then skips with a reason.
 pub fn engine(name: &str) -> Option<PathBuf> {
     static DOWNLOADING: std::sync::Mutex<()> = std::sync::Mutex::new(());
-    let file = format!("{name}.exe");
-    let mut dirs: Vec<PathBuf> = std::env::var_os("ORANGE_BIN_DIR").map(PathBuf::from).into_iter().collect();
-    dirs.extend(Path::new(env!("CARGO_MANIFEST_DIR")).ancestors().map(|a| a.join("vendor").join("bin")));
-    if let Some(p) = dirs.iter().map(|d| d.join(&file)).find(|p| p.is_file()) {
-        return Some(p);
-    }
     std::env::set_var("ORANGE_ENGINES_DIR", toolapp::engines_dir());
     let _g = DOWNLOADING.lock().unwrap_or_else(|p| p.into_inner());
     orange_lib::engines::ensure(name).ok().filter(|p| p.is_file())
@@ -683,9 +677,9 @@ pub fn check_conversion(src_key: &str, target: &str) {
 }
 
 // ------------------------------------------------------------------------------------------------
-// Media (engine-backed: FFmpeg / ffprobe from vendor/bin)
+// Media (engine-backed: FFmpeg / ffprobe, downloaded on demand)
 
-/// Runs vendored FFmpeg (`-y -loglevel error` prepended). Panics when it is missing.
+/// Runs FFmpeg (`-y -loglevel error` prepended). Panics when it is missing.
 pub fn ffmpeg(args: &[&str]) {
     let exe = engine("ffmpeg").expect("ffmpeg is missing");
     let st = std::process::Command::new(exe).args(["-hide_banner", "-loglevel", "error", "-y"]).args(args).status().unwrap();
