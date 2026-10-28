@@ -19,7 +19,7 @@ fn ext_of(p: &str) -> String {
 }
 
 /// Settings → the converters' preferences (read when each file starts).
-fn prefs_from_settings() -> convert::Prefs {
+pub fn prefs_from_settings() -> convert::Prefs {
     let s = crate::settings::get();
     convert::Prefs {
         jpg_quality: s.jpg_quality.clamp(1, 100),

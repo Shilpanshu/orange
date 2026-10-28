@@ -2,7 +2,7 @@
 //! hotkey opens near the pointer to save what's on the clipboard in another format, and a full
 //! snapshot/restore of the user's clipboard.
 
-use crate::{bridge, hud, log, wheel, win};
+use crate::{bridge, convert, hud, log, wheel, win};
 use serde::Serialize;
 use serde_json::json;
 use std::path::{Path, PathBuf};
@@ -122,6 +122,31 @@ pub fn hdrop_bytes(paths: &[String]) -> Vec<u8> {
     }
     buf.extend_from_slice(&[0, 0]);
     buf
+}
+
+/// Puts formatted text on the clipboard as a browser copy does: "HTML Format" (CF_HTML) plus the
+/// plain-text twin.
+pub fn put_html(fragment: &str, text: &str) -> Result<(), String> {
+    let head = |s: usize, e: usize, fs: usize, fe: usize| format!("Version:0.9
+StartHTML:{s:010}
+EndHTML:{e:010}
+StartFragment:{fs:010}
+EndFragment:{fe:010}
+");
+    let (pre, post) = ("<html><body>
+<!--StartFragment-->", "<!--EndFragment-->
+</body></html>");
+    let h = head(0, 0, 0, 0).len();
+    let (fs, fe) = (h + pre.len(), h + pre.len() + fragment.len());
+    let doc = format!("{}{pre}{fragment}{post}", head(h, fe + post.len(), fs, fe));
+    let _open = Open::new()?;
+    unsafe {
+        EmptyClipboard().map_err(|e| e.message())?;
+        set_bytes(CF_UNICODETEXT, &wide_z(text))?;
+        let mut b = doc.into_bytes();
+        b.push(0);
+        set_bytes(format_id("HTML Format"), &b)
+    }
 }
 
 /// Puts a PNG on the clipboard (as "PNG" for modern apps and as a DIB for everything else).
@@ -404,6 +429,10 @@ pub fn set_save_dir(dir: Option<PathBuf>) {
 }
 
 fn save_dir(app: &AppHandle) -> PathBuf {
+    let o = crate::settings::get().output;
+    if o.mode == "folder" && !o.folder.trim().is_empty() {
+        return PathBuf::from(o.folder.trim());
+    }
     POP.save_dir.lock().unwrap().clone().or_else(|| app.path().download_dir().ok()).unwrap_or_else(std::env::temp_dir)
 }
 
@@ -559,10 +588,10 @@ pub fn action(app: &AppHandle, target: &str) {
         "image" | "text" => {
             let (app, target, kind) = (app.clone(), target.to_string(), c.kind);
             std::thread::spawn(move || {
-                let r = if kind == "image" { save_image(&app, &target) } else { save_text(&app, &target) };
-                if let Err(e) = r {
-                    log::write(&format!("clipboard save failed: {e}"));
-                    hud::notice(&app, &e);
+                if kind == "image" {
+                    save_image(&app, &target)
+                } else {
+                    save_text(&app, &target)
                 }
             });
         }
@@ -574,6 +603,11 @@ fn stamp() -> String {
     // Local time via the system clock, formatted like 1.x: 2026-10-22 15-04-05.
     let t = unsafe { windows::Win32::System::SystemInformation::GetLocalTime() };
     format!("{}-{:02}-{:02} {:02}-{:02}-{:02}", t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond)
+}
+
+/// The name saved files start with: `Clipboard 2026-10-21 18-34-45`.
+pub fn save_name() -> String {
+    format!("Clipboard {}", stamp())
 }
 
 fn label(t: &str) -> String {
@@ -589,76 +623,120 @@ fn label(t: &str) -> String {
     }
 }
 
-pub fn save_image(app: &AppHandle, target: &str) -> Result<Option<PathBuf>, String> {
-    let s = snapshot();
-    let Some(img) = s.image else { return Err("The clipboard no longer holds an image.".into()) };
-    if target == "copy-png" {
-        let mut png = Vec::new();
-        img.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).map_err(|e| e.to_string())?;
-        put_png(&png)?;
-        hud::notice(app, "Copied to the clipboard as PNG");
-        return Ok(None);
+// ------------------------------------------------------------------ saving
+
+/// A converter context whose results land in `dir`.
+pub fn save_ctx(dir: &Path, report: impl Fn(f64, Option<&str>) + Send + Sync + 'static, cancel: std::sync::Arc<AtomicBool>) -> convert::Ctx {
+    let _ = std::fs::create_dir_all(dir);
+    let mut c = convert::Ctx::new(report, cancel);
+    c.out_override = Some(dir.to_path_buf());
+    c
+}
+
+fn first(v: Vec<PathBuf>) -> convert::R<PathBuf> {
+    v.into_iter().next().ok_or_else(|| convert::Fail::Raw("The conversion produced no file.".into()))
+}
+
+/// Saves the image in `snap` as `target` (png, jpg, webp, pdf) into `ctx`'s folder as `<name>.<ext>`.
+/// The same code the popover runs.
+pub fn save_image_to(target: &str, snap: &Snapshot, name: &str, ctx: &convert::Ctx) -> convert::R<PathBuf> {
+    let Some(img) = &snap.image else { return convert::user("The clipboard no longer holds an image.") };
+    let src = ctx.tmp().join(format!("{name}.png"));
+    match &snap.png {
+        // A clean PNG as it came; anything else is re-encoded.
+        Some(b) if b.starts_with(&[0x89, b'P', b'N', b'G']) => std::fs::write(&src, b)?,
+        _ => img.save_with_format(&src, image::ImageFormat::Png).map_err(|e| convert::Fail::Raw(e.to_string()))?,
     }
-    let fmt = match target {
-        "png" => image::ImageFormat::Png,
-        "jpg" => image::ImageFormat::Jpeg,
-        "webp" => image::ImageFormat::WebP,
-        other => return Err(format!("Saving the clipboard as {} arrives in a later Orange 2.0 build", label(other))),
-    };
-    let dir = save_dir(app);
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let out = crate::jobs::unique_path(&dir.join(format!("Clipboard {}.{target}", stamp())));
-    let job = hud::start(app, &format!("Clipboard image to {}", label(target)));
-    let r = (|| -> Result<(), String> {
-        let f = std::fs::File::create(&out).map_err(|e| e.to_string())?;
-        let mut wr = std::io::BufWriter::new(f);
-        if fmt == image::ImageFormat::Jpeg {
-            // JPG has no alpha: flatten onto white.
-            let rgb = image::RgbImage::from_fn(img.width(), img.height(), |x, y| {
-                let p = img.get_pixel(x, y).0;
-                let a = p[3] as u32;
-                let c = |v: u8| ((v as u32 * a + 255 * (255 - a)) / 255) as u8;
-                image::Rgb([c(p[0]), c(p[1]), c(p[2])])
-            });
-            image::codecs::jpeg::JpegEncoder::new_with_quality(&mut wr, 90).encode_image(&rgb).map_err(|e| e.to_string())
-        } else if fmt == image::ImageFormat::Png && s.png.is_some() {
-            use std::io::Write;
-            wr.write_all(s.png.as_ref().unwrap()).map_err(|e| e.to_string())
+    match target {
+        "png" => {
+            let out = ctx.out(&src, "png", "");
+            std::fs::copy(&src, &out)?;
+            Ok(out)
+        }
+        "jpg" | "webp" | "pdf" => convert::convert(&src, target, ctx).and_then(first),
+        o => convert::user(format!("Orange can't save the clipboard image as {}.", label(o))),
+    }
+}
+
+/// Saves the text (or HTML) in `snap` as `target` (txt, md, pdf, docx) into `ctx`'s folder.
+/// Formatted text (HTML on the clipboard) keeps its headings, lists and links.
+pub fn save_text_to(target: &str, snap: &Snapshot, name: &str, ctx: &convert::Ctx) -> convert::R<PathBuf> {
+    let html_text = if snap.html.is_empty() { String::new() } else { html_to_text(&snap.html) };
+    if snap.text.trim().is_empty() && html_text.is_empty() {
+        return convert::user("The clipboard no longer holds text.");
+    }
+    if !["txt", "md", "pdf", "docx"].contains(&target) {
+        return convert::user(format!("Orange can't save clipboard text as {}.", label(target)));
+    }
+    let has_html = !html_text.is_empty();
+    let tmp = ctx.tmp();
+    // Plain text is saved as it is; nothing to convert.
+    if target == "txt" || (target == "md" && !has_html) {
+        let out = ctx.out(&tmp.join(format!("{name}.{target}")), target, "");
+        let body = if snap.text.trim().is_empty() { &html_text } else { &snap.text };
+        std::fs::write(&out, body)?;
+        return Ok(out);
+    }
+    // Prefer the formatted copy (headings, lists, links); otherwise treat Markdown-looking text as Markdown.
+    let src = if has_html {
+        let p = tmp.join(format!("{name}.html"));
+        let body = if snap.html.to_ascii_lowercase().contains("<html") {
+            snap.html.clone()
         } else {
-            img.write_to(&mut wr, fmt).map_err(|e| e.to_string())
-        }
-    })();
-    match r {
-        Ok(()) => {
-            job.done(vec![out.to_string_lossy().into_owned()], vec![]);
-            Ok(Some(out))
-        }
+            format!("<!doctype html><html><head><meta charset=\"utf-8\"><title>{name}</title></head><body>{}</body></html>", snap.html)
+        };
+        std::fs::write(&p, body)?;
+        p
+    } else {
+        let p = tmp.join(format!("{name}.{}", if looks_like_markdown(&snap.text) { "md" } else { "txt" }));
+        std::fs::write(&p, &snap.text)?;
+        p
+    };
+    convert::convert(&src, target, ctx).and_then(first)
+}
+
+/// Runs a save as a HUD job: progress (engine downloads included), Cancel, a plain-sentence error
+/// and Undo (the new file goes to the Recycle Bin).
+fn run_save(app: &AppHandle, title: String, work: impl FnOnce(&convert::Ctx) -> convert::R<PathBuf>) {
+    convert::set_prefs_source(crate::jobs::prefs_from_settings);
+    crate::engines::set_app(app);
+    let job = std::sync::Arc::new(hud::start(app, &title));
+    let j = job.clone();
+    let ctx = save_ctx(&save_dir(app), move |f, note| j.progress(f, note), job.cancelled.clone());
+    match work(&ctx) {
+        Ok(out) => job.done(vec![out.to_string_lossy().into_owned()], vec![]),
+        Err(convert::Fail::Cancelled) => job.cancelled(),
         Err(e) => {
-            let _ = std::fs::remove_file(&out);
-            job.failed(&e);
-            Err(e)
+            log::write(&format!("clipboard save failed: {e}"));
+            job.failed(&convert::friendly(&e));
         }
     }
 }
 
-pub fn save_text(app: &AppHandle, target: &str) -> Result<Option<PathBuf>, String> {
+pub fn save_image(app: &AppHandle, target: &str) {
     let s = snapshot();
-    let html_text = if s.html.is_empty() { String::new() } else { html_to_text(&s.html) };
-    if s.text.trim().is_empty() && html_text.is_empty() {
-        return Err("The clipboard no longer holds text.".into());
+    if s.image.is_none() {
+        return hud::notice(app, "The clipboard no longer holds an image.");
     }
-    if !(target == "txt" || (target == "md" && html_text.is_empty())) {
-        // Formatted output (Markdown from HTML, PDF, Word) needs the document engine.
-        return Err(format!("Saving clipboard text as {} arrives in a later Orange 2.0 build", label(target)));
+    if target == "copy-png" {
+        let mut png = Vec::new();
+        let r = s.image.as_ref().unwrap().write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).map_err(|e| e.to_string()).and_then(|_| put_png(&png));
+        return hud::notice(
+            app,
+            &match r {
+                Ok(()) => "Copied to the clipboard as PNG".to_string(),
+                Err(e) => format!("Couldn't copy the image: {e}"),
+            },
+        );
     }
-    let dir = save_dir(app);
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let out = crate::jobs::unique_path(&dir.join(format!("Clipboard {}.{target}", stamp())));
-    let body = if s.text.trim().is_empty() { html_text } else { s.text };
-    std::fs::write(&out, body).map_err(|e| e.to_string())?;
-    let job = hud::start(app, &format!("Clipboard text to {}", label(target)));
-    job.done(vec![out.to_string_lossy().into_owned()], vec![]);
-    Ok(Some(out))
+    let (t, name) = (target.to_string(), save_name());
+    run_save(app, format!("Clipboard image to {}", label(target)), move |ctx| save_image_to(&t, &s, &name, ctx));
+}
+
+pub fn save_text(app: &AppHandle, target: &str) {
+    let s = snapshot();
+    let (t, name) = (target.to_string(), save_name());
+    run_save(app, format!("Clipboard text to {}", label(target)), move |ctx| save_text_to(&t, &s, &name, ctx));
 }
 
 // ------------------------------------------------------------------------ hotkey
