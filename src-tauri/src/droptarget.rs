@@ -1,4 +1,4 @@
-//! Orange's own OLE drop target for the wheel.
+﻿//! Orange's own OLE drop target for the wheel.
 //!
 //! wry registers a drop target on the webview's host window when the wheel is created, but on some
 //! machines WebView2 later registers its own on the same window, replacing wry's: drags from
@@ -122,8 +122,9 @@ unsafe extern "system" fn overlay_proc(h: HWND, m: u32, w: WPARAM, l: LPARAM) ->
     DefWindowProcW(h, m, w, l)
 }
 
-/// The invisible drop window over the wheel, created on first use.
-fn overlay(target: &IDropTarget) -> Option<HWND> {
+/// The invisible drop window over the wheel, created on first use. The wheel owns it: Windows keeps an
+/// owned window above its owner, so showing the wheel (also topmost) can never cover it.
+fn overlay(target: &IDropTarget, wheel: HWND) -> Option<HWND> {
     OVERLAY.with(|o| {
         if let Some(h) = *o.borrow() {
             return Some(HWND(h as *mut _));
@@ -132,7 +133,9 @@ fn overlay(target: &IDropTarget) -> Option<HWND> {
             let inst = GetModuleHandleW(None).ok()?;
             let class = windows::core::w!("OrangeWheelDrop");
             let wc = WNDCLASSW { lpfnWndProc: Some(overlay_proc), hInstance: inst.into(), lpszClassName: class, ..Default::default() };
-            RegisterClassW(&wc);
+            if RegisterClassW(&wc) == 0 {
+                log::write(&format!("drop overlay: RegisterClassW failed: {}", windows::core::Error::from_thread()));
+            }
             let h = CreateWindowExW(
                 WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE,
                 class,
@@ -142,12 +145,14 @@ fn overlay(target: &IDropTarget) -> Option<HWND> {
                 0,
                 1,
                 1,
-                None,
+                Some(wheel),
                 None,
                 Some(inst.into()),
                 None,
             )
+            .map_err(|e| log::write(&format!("drop overlay: CreateWindowExW failed: {e}")))
             .ok()?;
+            log::write("drop overlay created");
             let _ = SetLayeredWindowAttributes(h, COLORREF(0), 1, LWA_ALPHA);
             if let Err(e) = RegisterDragDrop(h, target) {
                 log::write(&format!("drop target: could not register on the overlay: {e}"));
@@ -165,7 +170,7 @@ pub fn cover(app: &AppHandle, wheel: HWND, on: bool) {
             .get_or_insert_with(|| Target { app: app.clone(), wheel: wheel.0 as isize, paths: RefCell::new(Vec::new()) }.into())
             .clone()
     });
-    let Some(h) = overlay(&target) else { return };
+    let Some(h) = overlay(&target, wheel) else { return };
     unsafe {
         if !on {
             let _ = ShowWindow(h, SW_HIDE);

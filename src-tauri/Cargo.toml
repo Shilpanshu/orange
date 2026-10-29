@@ -1,6 +1,6 @@
 [package]
 name = "orange"
-version = "2.0.0-beta.8"
+version = "2.0.0-beta.9"
 description = "Drag a file, tap a key, convert it. A radial file converter for Windows."
 authors = ["Shilpanshu"]
 license = "MIT"
