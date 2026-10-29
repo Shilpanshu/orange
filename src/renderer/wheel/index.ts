@@ -164,7 +164,12 @@ function flash(i: number) {
   stage.classList.add('landed');
 }
 
+// One choice per opening: a drop can be reported twice (the drop target and the mouse-hook stand-in).
+let chosen = false;
+
 function choose(i: number, paths: string[]) {
+  if (chosen) return;
+  chosen = true;
   flash(i);
   orange.send('wheel:choose', items[i].id, paths);
 }
@@ -221,6 +226,7 @@ orange.on(
       stage.classList.remove('landed');
       setPreview(null);
       // A new drag starts from nothing: nothing carried over from the one before.
+      chosen = false;
       exactPaths = null;
       selPaths = null;
       dragCount = -1;

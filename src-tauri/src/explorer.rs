@@ -595,6 +595,7 @@ pub fn send_drag_selection(app: &tauri::AppHandle) {
             return;
         }
         crate::log::write(&format!("explorer selection hint: {paths:?}"));
+        crate::wheel::set_selection(&app, paths.clone());
         // Show the file name and thumbnail now rather than after the pointer first moves (Windows
         // only reports the exact dragged files then). The exact files replace this when they arrive.
         crate::wheel::send_preview(&app, paths.clone(), true);

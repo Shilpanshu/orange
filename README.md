@@ -47,6 +47,10 @@ To stay small, Orange does not ship the heavy engines. Each one downloads the fi
 
 Some things need nothing at all: reading PNG, JPEG, GIF, BMP, ICO and TIFF; writing JPG, PNG, BMP and PDF; subtitles; CSV, XLSX and ODS; and turning web pages into PDF (it uses the Edge that comes with Windows).
 
+## 2.0.0-beta.7
+
+Fixes the wheel ignoring drops on PCs where Windows never passes the drag to it (the slices looked disabled). Orange now follows the pointer itself: slices light up as you move, and letting go over a slice acts on the files you were dragging from Explorer.
+
 ## 2.0.0-beta.6
 
 Fixes dropping on the wheel doing nothing (for example Copy path copying nothing). On some PCs the drop goes to the wheel's web page, which is told the file names but not where the files are. The wheel now takes the paths from the files selected in Explorer, and only when their names are exactly the dropped ones.

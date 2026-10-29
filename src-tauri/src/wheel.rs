@@ -23,6 +23,8 @@ struct Inner {
     opened_at: Option<Instant>,
     /// Paths reported by the drop target while a drag hovers the wheel.
     drag_paths: Vec<String>,
+    /// The Explorer selection read when the drag started (see `explorer::drag_started`).
+    selection: Vec<String>,
 }
 
 pub struct WheelState {
@@ -183,6 +185,7 @@ pub fn open(app: &AppHandle, kind: &str, mode: Mode, paths: Option<Vec<String>>)
     if !was_open {
         wheel.inner.lock().unwrap().opened_at = Some(Instant::now());
         wheel.inner.lock().unwrap().drag_paths.clear();
+        wheel.inner.lock().unwrap().selection.clear();
     }
     hooks::LISTENING_NAV.store(true, Ordering::Relaxed);
     let Some(w) = app.get_webview_window(LABEL) else { return };
@@ -209,6 +212,7 @@ pub fn open(app: &AppHandle, kind: &str, mode: Mode, paths: Option<Vec<String>>)
     // milliseconds. If they have not arrived after 700 ms, the wheel is working from a guess; say which
     // window the drag is actually over, so a report from a real machine shows why.
     if !was_open && mode == Mode::Drag {
+        follow_pointer(app, session);
         let app2 = app.clone();
         let wheel_hwnd = hwnd.0 as isize;
         std::thread::spawn(move || {
@@ -251,11 +255,62 @@ pub fn nav(app: &AppHandle, key: &str) {
     }
 }
 
+/// The Explorer selection for the current drag, used when Windows never delivers the drag to the wheel.
+pub fn set_selection(app: &AppHandle, paths: Vec<String>) {
+    app.state::<AppState>().wheel.inner.lock().unwrap().selection = paths;
+}
+
+/// The pointer in the wheel window's client pixels, if it is over the wheel window.
+fn pointer_on_wheel(app: &AppHandle) -> Option<(f64, f64)> {
+    use windows::Win32::Foundation::{POINT, RECT};
+    use windows::Win32::UI::WindowsAndMessaging::{GetCursorPos, GetWindowRect};
+    let w = app.get_webview_window(LABEL)?;
+    let h = w.hwnd().ok()?;
+    let (mut p, mut r) = (POINT::default(), RECT::default());
+    unsafe {
+        GetCursorPos(&mut p).ok()?;
+        GetWindowRect(h, &mut r).ok()?;
+    }
+    let inside = p.x >= r.left && p.x < r.right && p.y >= r.top && p.y < r.bottom;
+    inside.then(|| ((p.x - r.left) as f64, (p.y - r.top) as f64))
+}
+
+/// On some PCs Windows hands a drag over the wheel to WebView2, which refuses it, so the wheel never
+/// hears of it ("no DragEnter" in the log). Then the hooks stand in: the pointer position drives the
+/// highlight while the button is held, and the release is the drop, with the Explorer selection read
+/// when the drag started.
+fn follow_pointer(app: &AppHandle, session: u64) {
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let st = app.state::<AppState>();
+        let mut last = None;
+        while st.wheel.is_open() && st.wheel.session.load(Ordering::SeqCst) == session && hooks::primary_button_down() {
+            if !drag_paths_known(&app) {
+                let at = pointer_on_wheel(&app);
+                if at != last {
+                    if let Some((x, y)) = at {
+                        on_drop_event(&app, DropEv::Over(x, y));
+                    }
+                    last = at;
+                }
+            }
+            std::thread::sleep(Duration::from_millis(16));
+        }
+    });
+}
+
 /// The mouse button went up; if no drop landed on the wheel shortly after, close it.
 pub fn release_soon(app: &AppHandle) {
     let st = app.state::<AppState>();
     if !st.wheel.is_open() || st.wheel.click_mode.load(Ordering::SeqCst) {
         return;
+    }
+    if !drag_paths_known(app) {
+        let selection = st.wheel.inner.lock().unwrap().selection.clone();
+        if let (false, Some((x, y))) = (selection.is_empty(), pointer_on_wheel(app)) {
+            log::write("drop on the wheel taken from the mouse hook and the Explorer selection");
+            on_drop_event(app, DropEv::Drop(selection, x, y));
+        }
     }
     let session = st.wheel.session.load(Ordering::SeqCst);
     let app = app.clone();
