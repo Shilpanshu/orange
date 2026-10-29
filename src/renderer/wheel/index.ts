@@ -345,8 +345,19 @@ window.addEventListener('dragleave', () => {
 window.addEventListener('drop', (e) => {
   e.preventDefault();
   const files = Array.from(e.dataTransfer?.files ?? []);
-  dropAt(e.clientX, e.clientY, files.map((f) => orange.pathForFile(f)).filter(Boolean));
+  let paths = files.map((f) => orange.pathForFile(f)).filter(Boolean);
+  // On some PCs WebView2 takes the drop instead of Orange's drop target, and a page drop carries file
+  // names but no paths. The Explorer selection has the paths; use it only when its names are exactly
+  // the dropped ones, so a stale or wrong selection can never be acted on.
+  if (!paths.length && files.length && selPaths && sameNames(files.map((f) => f.name), selPaths)) paths = selPaths;
+  dropAt(e.clientX, e.clientY, paths);
 });
+
+function sameNames(names: string[], paths: string[]): boolean {
+  const base = (p: string) => p.slice(Math.max(p.lastIndexOf('\\'), p.lastIndexOf('/')) + 1).toLowerCase();
+  const a = names.map((n) => n.toLowerCase()).sort().join('\n');
+  return a === paths.map(base).sort().join('\n');
+}
 
 function dropAt(x: number, y: number, paths: string[]) {
   let i = segmentAt(x, y);
