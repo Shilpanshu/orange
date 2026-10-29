@@ -5,6 +5,11 @@
 //! Explorer then reach WebView2, and the wheel never learns which files are dragged (log line
 //! "no DragEnter 700 ms after the wheel opened"). So every time the wheel opens, this target is
 //! (re)registered on the wheel's windows in this process, last, and therefore wins.
+//!
+//! That was not enough on every PC: drags still went through WebView2's own windows (in its browser
+//! process) and were refused. So during a drag Orange also lays its own invisible window exactly over
+//! the wheel (constant alpha 1/255, which still takes hit-tests). It belongs to this process and has no
+//! WebView2 inside, so Windows hands the drag to this target directly.
 
 use crate::{log, wheel};
 use std::cell::RefCell;
@@ -19,7 +24,13 @@ use windows::Win32::System::Ole::{
 };
 use windows::Win32::System::SystemServices::MODIFIERKEYS_FLAGS;
 use windows::Win32::UI::Shell::{DragQueryFileW, HDROP};
-use windows::Win32::UI::WindowsAndMessaging::{EnumChildWindows, GetWindowThreadProcessId};
+use windows::Win32::Foundation::{COLORREF, LRESULT, RECT, WPARAM};
+use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::UI::WindowsAndMessaging::{
+    CreateWindowExW, DefWindowProcW, EnumChildWindows, GetWindowRect, GetWindowThreadProcessId, RegisterClassW, SetLayeredWindowAttributes,
+    SetWindowPos, ShowWindow, HWND_TOPMOST, LWA_ALPHA, SWP_NOACTIVATE, SWP_SHOWWINDOW, SW_HIDE, WNDCLASSW, WS_EX_LAYERED, WS_EX_NOACTIVATE,
+    WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+};
 
 #[implement(IDropTarget)]
 struct Target {
@@ -104,6 +115,67 @@ impl IDropTarget_Impl for Target_Impl {
 
 thread_local! {
     static TARGET: RefCell<Option<IDropTarget>> = const { RefCell::new(None) };
+    static OVERLAY: RefCell<Option<isize>> = const { RefCell::new(None) };
+}
+
+unsafe extern "system" fn overlay_proc(h: HWND, m: u32, w: WPARAM, l: LPARAM) -> LRESULT {
+    DefWindowProcW(h, m, w, l)
+}
+
+/// The invisible drop window over the wheel, created on first use.
+fn overlay(target: &IDropTarget) -> Option<HWND> {
+    OVERLAY.with(|o| {
+        if let Some(h) = *o.borrow() {
+            return Some(HWND(h as *mut _));
+        }
+        unsafe {
+            let inst = GetModuleHandleW(None).ok()?;
+            let class = windows::core::w!("OrangeWheelDrop");
+            let wc = WNDCLASSW { lpfnWndProc: Some(overlay_proc), hInstance: inst.into(), lpszClassName: class, ..Default::default() };
+            RegisterClassW(&wc);
+            let h = CreateWindowExW(
+                WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE,
+                class,
+                windows::core::w!("Orange wheel drop"),
+                WS_POPUP,
+                0,
+                0,
+                1,
+                1,
+                None,
+                None,
+                Some(inst.into()),
+                None,
+            )
+            .ok()?;
+            let _ = SetLayeredWindowAttributes(h, COLORREF(0), 1, LWA_ALPHA);
+            if let Err(e) = RegisterDragDrop(h, target) {
+                log::write(&format!("drop target: could not register on the overlay: {e}"));
+            }
+            *o.borrow_mut() = Some(h.0 as isize);
+            Some(h)
+        }
+    })
+}
+
+/// Lays the drop window over the wheel (drag mode) or hides it. Main thread only.
+pub fn cover(app: &AppHandle, wheel: HWND, on: bool) {
+    let target = TARGET.with(|t| {
+        t.borrow_mut()
+            .get_or_insert_with(|| Target { app: app.clone(), wheel: wheel.0 as isize, paths: RefCell::new(Vec::new()) }.into())
+            .clone()
+    });
+    let Some(h) = overlay(&target) else { return };
+    unsafe {
+        if !on {
+            let _ = ShowWindow(h, SW_HIDE);
+            return;
+        }
+        let mut r = RECT::default();
+        if GetWindowRect(wheel, &mut r).is_ok() {
+            let _ = SetWindowPos(h, Some(HWND_TOPMOST), r.left, r.top, r.right - r.left, r.bottom - r.top, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        }
+    }
 }
 
 unsafe extern "system" fn collect(h: HWND, l: LPARAM) -> BOOL {

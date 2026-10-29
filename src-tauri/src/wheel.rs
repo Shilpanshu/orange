@@ -201,7 +201,12 @@ pub fn open(app: &AppHandle, kind: &str, mode: Mode, paths: Option<Vec<String>>)
     if !was_open {
         // Re-register Orange's drop target each time: WebView2 can replace it after creation.
         let (app3, raw) = (app.clone(), hwnd.0 as isize);
-        let _ = app.run_on_main_thread(move || crate::droptarget::register(&app3, windows::Win32::Foundation::HWND(raw as *mut _)));
+        let drag = mode == Mode::Drag;
+        let _ = app.run_on_main_thread(move || {
+            let h = windows::Win32::Foundation::HWND(raw as *mut _);
+            crate::droptarget::register(&app3, h);
+            crate::droptarget::cover(&app3, h, drag);
+        });
         crate::set_low_memory(&w, false);
         win::show_no_activate(hwnd, mode == Mode::Click);
     }
@@ -330,6 +335,10 @@ pub fn close(app: &AppHandle) {
     hooks::LISTENING_NAV.store(false, Ordering::Relaxed);
     let session = st.wheel.session.fetch_add(1, Ordering::SeqCst) + 1;
     bridge::emit(app, LABEL, "wheel:close", json!([]));
+    if let Some(Ok(h)) = app.get_webview_window(LABEL).map(|w| w.hwnd()) {
+        let (app2, raw) = (app.clone(), h.0 as isize);
+        let _ = app.run_on_main_thread(move || crate::droptarget::cover(&app2, windows::Win32::Foundation::HWND(raw as *mut _), false));
+    }
     // Let the close animation play, then hide.
     let app = app.clone();
     std::thread::spawn(move || {
