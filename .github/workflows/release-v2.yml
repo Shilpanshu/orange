@@ -77,21 +77,24 @@ jobs:
           RUSTFLAGS: --cfg orange_converters --cfg orange_settings --cfg orange_updater --cfg orange_tools
           ORANGE_ENGINES_DIR: ${{ runner.temp }}/orange-engines
 
-      # These open hidden WebView2 tool windows and use the real clipboard. They passed for
-      # v2.0.0-beta.1 but failed for beta.2 on identical code, so they are flaky on hosted runners and
-      # only report. The real outcome is printed by the step below.
+      # These open hidden WebView2 tool windows and use the real clipboard. They failed once (beta.2)
+      # on code that passed before and after, so a failure gets one retry; failing twice stops the release.
       - name: Tests (tool windows and clipboard)
         id: tests_windows
-        continue-on-error: true
         timeout-minutes: 30
         working-directory: src-tauri
-        run: cargo test --no-fail-fast --test tools --test clipboard
+        run: |
+          cargo test --no-fail-fast --test tools --test clipboard
+          if ($LASTEXITCODE -ne 0) {
+            "::warning title=Tests windows+clipboard::failed once, retrying"
+            cargo test --no-fail-fast --test tools --test clipboard
+          }
+          exit $LASTEXITCODE
         env:
           RUSTFLAGS: --cfg orange_converters --cfg orange_settings --cfg orange_updater --cfg orange_tools
           ORANGE_ENGINES_DIR: ${{ runner.temp }}/orange-engines
 
-      # GitHub shows a continue-on-error step as green even when it failed. This leaves the real outcome
-      # as a public annotation (readable without logging in) on the run page and through the API.
+      # Leaves each outcome as a public annotation (readable without logging in) on the run page and API.
       - name: Report test outcomes
         if: always()
         run: |
@@ -105,10 +108,28 @@ jobs:
           $f = Join-Path $env:TEMP 'orange2-tests/skips.txt'
           if (Test-Path $f) { Get-Content $f } else { 'No skipped cases.' }
 
+      # Authenticode (stops the SmartScreen "unknown publisher" warning) only once the repo has the
+      # secrets WINDOWS_CERTIFICATE (the .pfx, base64) and WINDOWS_CERTIFICATE_PASSWORD. Without them the
+      # installer is still built, just unsigned. The updater signature below is separate and always on.
       - name: Build the signed installer
         working-directory: src-tauri
-        run: cargo tauri build --bundles nsis
+        run: |
+          if ($env:WINDOWS_CERTIFICATE) {
+            $env:ORANGE_CERT_PATH = Join-Path $env:RUNNER_TEMP 'orange-cert.pfx'
+            [IO.File]::WriteAllBytes($env:ORANGE_CERT_PATH, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE))
+            $script = (Resolve-Path ../scripts/sign-windows.ps1).Path
+            $env:TAURI_CONFIG = (@{ bundle = @{ windows = @{ signCommand = "pwsh -NoProfile -File `"$script`" %1" } } } | ConvertTo-Json -Depth 5 -Compress)
+            "::notice title=Code signing::on"
+          } else {
+            "::notice title=Code signing::off (no WINDOWS_CERTIFICATE secret)"
+          }
+          cargo tauri build --bundles nsis
+          $code = $LASTEXITCODE
+          if ($env:ORANGE_CERT_PATH) { Remove-Item $env:ORANGE_CERT_PATH -Force -ErrorAction SilentlyContinue }
+          exit $code
         env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          ORANGE_CERT_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 

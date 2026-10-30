@@ -1,0 +1,23 @@
+{
+  "$schema": "https://fallow.tools/schema/config.json",
+  "entry": [
+    "src/renderer/*/index.ts",
+    "web/*/index.ts",
+    "web/tool/pages.ts",
+    "web/tool/host/node/*.ts",
+    "scripts/*.mjs",
+    "tests/*.mjs"
+  ],
+  "ignorePatterns": [
+    ".claude/**",
+    "web-dist/**",
+    "src-tauri/target/**",
+    "vendor/**"
+  ],
+  "ignoreDependencies": [
+    "pdfjs-dist"
+  ],
+  "health": {
+    "maxCrap": 0
+  }
+}

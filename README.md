@@ -47,6 +47,12 @@ To stay small, Orange does not ship the heavy engines. Each one downloads the fi
 
 Some things need nothing at all: reading PNG, JPEG, GIF, BMP, ICO and TIFF; writing JPG, PNG, BMP and PDF; subtitles; CSV, XLSX and ODS; and turning web pages into PDF (it uses the Edge that comes with Windows).
 
+## 2.0.0
+
+The first stable 2.0. It is beta.10 plus a release build that is fully tested again: the tool window and clipboard tests now have to pass before a release goes out (with one retry), as the core tests always did. If you are on a 2.0 beta, Orange updates to this on its own. If you are on 1.x, it updates too.
+
+The release build can now also Authenticode-sign the installer, which removes the SmartScreen warning. That switches on once a code-signing certificate is added (see [Publish a release](#publish-a-release)); this release is not signed yet.
+
 ## 2.0.0-beta.10
 
 Fixes switching wheels during a drag (tapping Ctrl, Alt or Shift again): after a switch the wheel stopped reacting. Orange's drop window now follows the wheel each time it opens, and if a drag ever slips past it, Orange's own mouse tracking finishes the drop.
@@ -272,6 +278,8 @@ git push origin v2.0.1
 ```
 
 The `Release v2` workflow tests, builds, signs and publishes the installer together with `latest.json`, which the in-app updater reads. It needs two repository secrets, `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` (the update signing key; keep a copy somewhere safe, because installed copies can only update from releases signed with it). See [docs/MIGRATION.md](docs/MIGRATION.md).
+
+To also Authenticode-sign the app and installer (no more SmartScreen warning), add `WINDOWS_CERTIFICATE` (the code-signing `.pfx`, base64-encoded) and `WINDOWS_CERTIFICATE_PASSWORD`. The workflow signs with them through `scripts/sign-windows.ps1`; without them it builds unsigned.
 
 ### Project layout
 
