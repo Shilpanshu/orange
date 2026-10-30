@@ -47,6 +47,10 @@ To stay small, Orange does not ship the heavy engines. Each one downloads the fi
 
 Some things need nothing at all: reading PNG, JPEG, GIF, BMP, ICO and TIFF; writing JPG, PNG, BMP and PDF; subtitles; CSV, XLSX and ODS; and turning web pages into PDF (it uses the Edge that comes with Windows).
 
+## 2.0.0-beta.10
+
+Fixes switching wheels during a drag (tapping Ctrl, Alt or Shift again): after a switch the wheel stopped reacting. Orange's drop window now follows the wheel each time it opens, and if a drag ever slips past it, Orange's own mouse tracking finishes the drop.
+
 ## 2.0.0-beta.9
 
 The invisible drop window from beta.8 now always stays above the wheel; in beta.8 the wheel could cover it, so the "no entry" cursor remained.

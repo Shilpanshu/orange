@@ -25,6 +25,11 @@ struct Inner {
     drag_paths: Vec<String>,
     /// The Explorer selection read when the drag started (see `explorer::drag_started`).
     selection: Vec<String>,
+    /// A drop target is tracking the drag right now (between its enter and leave/drop). When it isn't,
+    /// the hooks stand in (see `follow_pointer`).
+    ole_over: bool,
+    /// A drop target already delivered this opening's drop; the hooks must not drop again.
+    ole_dropped: bool,
 }
 
 pub struct WheelState {
@@ -161,13 +166,24 @@ pub fn on_drop_event(app: &AppHandle, d: DropEv) {
     let st = app.state::<AppState>();
     let payload = match d {
         DropEv::Enter(paths, x, y) => {
+            st.wheel.inner.lock().unwrap().ole_over = true;
             st.wheel.inner.lock().unwrap().drag_paths = paths.clone();
             send_preview(app, paths.clone(), false);
             json!({ "type": "enter", "paths": paths, "x": x / scale, "y": y / scale })
         }
         DropEv::Over(x, y) => json!({ "type": "over", "x": x / scale, "y": y / scale }),
-        DropEv::Drop(paths, x, y) => json!({ "type": "drop", "paths": paths, "x": x / scale, "y": y / scale }),
-        DropEv::Leave => json!({ "type": "leave", "x": -1, "y": -1 }),
+        DropEv::Drop(paths, x, y) => {
+            {
+                let mut i = st.wheel.inner.lock().unwrap();
+                i.ole_over = false;
+                i.ole_dropped = true;
+            }
+            json!({ "type": "drop", "paths": paths, "x": x / scale, "y": y / scale })
+        }
+        DropEv::Leave => {
+            st.wheel.inner.lock().unwrap().ole_over = false;
+            json!({ "type": "leave", "x": -1, "y": -1 })
+        }
     };
     if payload["type"] != "over" {
         log::write(&format!("wheel drag {payload}"));
@@ -186,6 +202,8 @@ pub fn open(app: &AppHandle, kind: &str, mode: Mode, paths: Option<Vec<String>>)
         wheel.inner.lock().unwrap().opened_at = Some(Instant::now());
         wheel.inner.lock().unwrap().drag_paths.clear();
         wheel.inner.lock().unwrap().selection.clear();
+        wheel.inner.lock().unwrap().ole_over = false;
+        wheel.inner.lock().unwrap().ole_dropped = false;
     }
     hooks::LISTENING_NAV.store(true, Ordering::Relaxed);
     let Some(w) = app.get_webview_window(LABEL) else { return };
@@ -198,15 +216,23 @@ pub fn open(app: &AppHandle, kind: &str, mode: Mode, paths: Option<Vec<String>>)
         "cursor": { "x": placed.cursor_x, "y": placed.cursor_y },
     });
     bridge::emit(app, LABEL, "wheel:open", json!([payload]));
-    if !was_open {
-        // Re-register Orange's drop target each time: WebView2 can replace it after creation.
+    // Re-register Orange's drop target on each opening (WebView2 can replace it after creation) and lay
+    // the drop overlay over the wheel again: switching wheels re-centres the wheel under the pointer.
+    {
         let (app3, raw) = (app.clone(), hwnd.0 as isize);
         let drag = mode == Mode::Drag;
         let _ = app.run_on_main_thread(move || {
             let h = windows::Win32::Foundation::HWND(raw as *mut _);
-            crate::droptarget::register(&app3, h);
+            if !was_open {
+                crate::droptarget::register(&app3, h);
+            }
             crate::droptarget::cover(&app3, h, drag);
         });
+    }
+    if mode == Mode::Drag {
+        follow_pointer(app, session);
+    }
+    if !was_open {
         crate::set_low_memory(&w, false);
         win::show_no_activate(hwnd, mode == Mode::Click);
     }
@@ -217,7 +243,6 @@ pub fn open(app: &AppHandle, kind: &str, mode: Mode, paths: Option<Vec<String>>)
     // milliseconds. If they have not arrived after 700 ms, the wheel is working from a guess; say which
     // window the drag is actually over, so a report from a real machine shows why.
     if !was_open && mode == Mode::Drag {
-        follow_pointer(app, session);
         let app2 = app.clone();
         let wheel_hwnd = hwnd.0 as isize;
         std::thread::spawn(move || {
@@ -234,6 +259,18 @@ pub fn open(app: &AppHandle, kind: &str, mode: Mode, paths: Option<Vec<String>>)
             }
         });
     }
+}
+
+/// What a drop the hooks stand in for acts on: the files a drop target already reported, else the
+/// Explorer selection. None while a drop target is tracking the drag itself.
+fn fallback_paths(app: &AppHandle) -> Option<Vec<String>> {
+    let st = app.state::<AppState>();
+    let inner = st.wheel.inner.lock().unwrap();
+    if inner.ole_over || inner.ole_dropped {
+        return None;
+    }
+    let p = if inner.drag_paths.is_empty() { inner.selection.clone() } else { inner.drag_paths.clone() };
+    (!p.is_empty()).then_some(p)
 }
 
 /// True once the window's drop target has reported the exact dragged files for this opening. From then
@@ -290,7 +327,7 @@ fn follow_pointer(app: &AppHandle, session: u64) {
         let st = app.state::<AppState>();
         let mut last = None;
         while st.wheel.is_open() && st.wheel.session.load(Ordering::SeqCst) == session && hooks::primary_button_down() {
-            if !drag_paths_known(&app) {
+            if fallback_paths(&app).is_some() {
                 let at = pointer_on_wheel(&app);
                 if at != last {
                     if let Some((x, y)) = at {
@@ -310,12 +347,9 @@ pub fn release_soon(app: &AppHandle) {
     if !st.wheel.is_open() || st.wheel.click_mode.load(Ordering::SeqCst) {
         return;
     }
-    if !drag_paths_known(app) {
-        let selection = st.wheel.inner.lock().unwrap().selection.clone();
-        if let (false, Some((x, y))) = (selection.is_empty(), pointer_on_wheel(app)) {
-            log::write("drop on the wheel taken from the mouse hook and the Explorer selection");
-            on_drop_event(app, DropEv::Drop(selection, x, y));
-        }
+    if let (Some(paths), Some((x, y))) = (fallback_paths(app), pointer_on_wheel(app)) {
+        log::write("drop on the wheel taken from the mouse hook");
+        on_drop_event(app, DropEv::Drop(paths, x, y));
     }
     let session = st.wheel.session.load(Ordering::SeqCst);
     let app = app.clone();
