@@ -1,0 +1,11 @@
+{
+  "version": "2.0.0",
+  "platforms": {
+    "windows-x86_64": {
+      "url": "https://shilpanshu.github.io/orange/update/Orange_2.0.0_x64-setup.exe",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSeFE1bFlTNFgrNHRBR3FrZnNkQ1Rmb3UrV1ZwQ2RNZGMwUVdEQ0cwQmFrQ2VYUEtKbW5YMXdsUEdsUzlIc1djYkpJK2prQTV3MUhwSjFKbSs0VnVZZjJLa1JvNkZqcFFJPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzMzUyODk3CWZpbGU6T3JhbmdlXzIuMC4wX3g2NC1zZXR1cC5leGUJdmVyc2lvbjoyLjAuMApaWUZtVnhNd1VYZmFIb3hrZlpTUHFmbVBybDJZOTB6eGRwM1FsdDY0WVNFczBONW1hSlpiWlBvMkNSaWd3RE9PckpseHR1dCt0WmQzY0RaZ1kvbWlDUT09Cg=="
+    }
+  },
+  "notes": "Orange 2.0.0. See https://github.com/Shilpanshu/orange/releases/tag/v2.0.0",
+  "pub_date": "2026-10-30T09:34:58.327Z"
+}
